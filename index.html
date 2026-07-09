@@ -1,1 +1,1916 @@
-https://claude.ai/public/artifacts/e761b9ba-07c6-4687-ac9b-b975ca3a1aab
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1, user-scalable=no" />
+<title>Difripar - App Entregas</title>
+<link rel="icon" href="data:,">
+<style>
+  html, body { margin: 0; padding: 0; background: #F5F7F9; }
+  #root { min-height: 100vh; }
+</style>
+</head>
+<body>
+<div id="root">
+  <div style="display:flex;align-items:center;justify-content:center;height:100vh;font-family:sans-serif;color:#7A8CA0;">
+    Carregando...
+  </div>
+</div>
+
+<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://cdn.sheetjs.com/xlsx-latest/package/dist/xlsx.full.min.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+<script type="text/babel" data-presets="react">
+const { useState, useEffect, useMemo, useRef } = React;
+
+// ---- shim de armazenamento: usa Firestore (sincronizacao em tempo real entre celulares) ----
+const firebaseConfig = {
+  apiKey: "AIzaSyBx1nz-53L7CYIkhj-2b70q3dgbdoOWvHw",
+  authDomain: "app-entregas-6a3a5.firebaseapp.com",
+  projectId: "app-entregas-6a3a5",
+  storageBucket: "app-entregas-6a3a5.firebasestorage.app",
+  messagingSenderId: "19134084646",
+  appId: "1:19134084646:web:30dc813c47e2baf6d618e7"
+};
+firebase.initializeApp(firebaseConfig);
+const db = firebase.firestore();
+function sanitizeKey(k) { return String(k).replace(/[\/]/g, '_'); }
+
+window.storage = {
+  async get(key, shared) {
+    const doc = await db.collection('app_storage').doc(sanitizeKey(key)).get();
+    if (!doc.exists) { throw new Error('not_found'); }
+    return { key, value: doc.data().value, shared: !!shared };
+  },
+  async set(key, value, shared) {
+    await db.collection('app_storage').doc(sanitizeKey(key)).set({ value, updatedAt: Date.now() });
+    return { key, value, shared: !!shared };
+  },
+  async delete(key, shared) {
+    await db.collection('app_storage').doc(sanitizeKey(key)).delete();
+    return { key, deleted: true, shared: !!shared };
+  },
+  async list(prefix, shared) {
+    return { keys: [], prefix, shared: !!shared };
+  },
+  subscribe(key, shared, callback) {
+    const unsub = db.collection('app_storage').doc(sanitizeKey(key))
+      .onSnapshot({ includeMetadataChanges: true }, (doc) => {
+        if (doc.metadata.hasPendingWrites) return; // ignora o eco otimista da propria escrita
+        callback(doc.exists ? doc.data().value : null);
+      }, (err) => { console.error('Erro de sincronizacao Firestore:', err); });
+    return unsub;
+  }
+};
+
+// ---- icones (SVG simples no estilo lucide, sem dependencia externa) ----
+function makeIcon(children) {
+  return function Icon({ size = 24, color = 'currentColor', style, className }) {
+    return React.createElement('svg', {
+      width: size, height: size, viewBox: '0 0 24 24', fill: 'none',
+      stroke: color, strokeWidth: 2, strokeLinecap: 'round', strokeLinejoin: 'round',
+      style, className
+    }, children);
+  };
+}
+const h = React.createElement;
+const Check = makeIcon(h('polyline', { points: '20 6 9 17 4 12' }));
+const X = makeIcon([h('line', { key:1, x1:18,y1:6,x2:6,y2:18 }), h('line', { key:2, x1:6,y1:6,x2:18,y2:18 })]);
+const Plus = makeIcon([h('line', { key:1, x1:12,y1:5,x2:12,y2:19 }), h('line', { key:2, x1:5,y1:12,x2:19,y2:12 })]);
+const Search = makeIcon([h('circle', { key:1, cx:11,cy:11,r:8 }), h('line', { key:2, x1:21,y1:21,x2:16.65,y2:16.65 })]);
+const ChevronDown = makeIcon(h('polyline', { points: '6 9 12 15 18 9' }));
+const Clock = makeIcon([h('circle', { key:1, cx:12,cy:12,r:10 }), h('polyline', { key:2, points:'12 6 12 12 16 14' })]);
+const AlertTriangle = makeIcon([
+  h('path', { key:1, d:'M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z' }),
+  h('line', { key:2, x1:12,y1:9,x2:12,y2:13 }),
+  h('line', { key:3, x1:12,y1:17,x2:12.01,y2:17 })
+]);
+const MapPin = makeIcon([h('path', { key:1, d:'M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z' }), h('circle', { key:2, cx:12,cy:10,r:3 })]);
+const Package = makeIcon([
+  h('path', { key:1, d:'M21 8l-9-5-9 5v8l9 5 9-5V8z' }),
+  h('polyline', { key:2, points:'3.27 6.96 12 12.01 20.73 6.96' }),
+  h('line', { key:3, x1:12,y1:22.08,x2:12,y2:12 })
+]);
+const Truck = makeIcon([
+  h('rect', { key:1, x:1,y:6,width:15,height:11,rx:1 }),
+  h('path', { key:2, d:'M16 10h4l3 3v4h-7z' }),
+  h('circle', { key:3, cx:5.5,cy:18.5,r:1.8 }),
+  h('circle', { key:4, cx:17.5,cy:18.5,r:1.8 })
+]);
+const RotateCcw = makeIcon([h('polyline', { key:1, points:'1 4 1 10 7 10' }), h('path', { key:2, d:'M3.51 15a9 9 0 1 0 2.13-9.36L1 10' })]);
+const Upload = makeIcon([
+  h('path', { key:1, d:'M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4' }),
+  h('polyline', { key:2, points:'17 8 12 3 7 8' }),
+  h('line', { key:3, x1:12,y1:3,x2:12,y2:15 })
+]);
+const FileSpreadsheet = makeIcon([
+  h('path', { key:1, d:'M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z' }),
+  h('polyline', { key:2, points:'14 2 14 8 20 8' }),
+  h('line', { key:3, x1:8,y1:13,x2:16,y2:13 }),
+  h('line', { key:4, x1:8,y1:17,x2:16,y2:17 }),
+  h('line', { key:5, x1:8,y1:9,x2:10,y2:9 })
+]);
+const PenTool = makeIcon([
+  h('path', { key:1, d:'M12 19l7-7 3 3-7 7-3-3z' }),
+  h('path', { key:2, d:'M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z' }),
+  h('circle', { key:3, cx:11,cy:11,r:2 })
+]);
+const Eraser = makeIcon(h('path', { d:'M20 20H7L3 16c-.5-.5-.5-1.5 0-2l10-10c.5-.5 1.5-.5 2 0l6 6c.5.5.5 1.5 0 2L11 22' }));
+const Settings = makeIcon([
+  h('circle', { key:1, cx:12,cy:12,r:3 }),
+  h('path', { key:2, d:'M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z' })
+]);
+const Trash2 = makeIcon([
+  h('polyline', { key:1, points:'3 6 5 6 21 6' }),
+  h('path', { key:2, d:'M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2' }),
+  h('line', { key:3, x1:10,y1:11,x2:10,y2:17 }),
+  h('line', { key:4, x1:14,y1:11,x2:14,y2:17 })
+]);
+
+
+const LOGO_SRC = 'data:image/webp;base64,UklGRgYmAABXRUJQVlA4IPolAADQgwCdASpoAbQAPlEkj0UjoiEUaZVQOAUEsTdwufX0V+A/gH7Ad6davtH9e/Y78zPlZqL9P/qn50/sP/k/1XC51F5onj357/mP7N/ev9h/hf/////uR/dP+L/aPcL+iv9L7gP6g/5L/G/4v/bf5D/////wF+YX+mf2j/j/3j99fl1/yv7me5X+m/4P/afsZ8gX87/qv3694d+63sC/zX+6f9v1x/2c+Er+r/7H9qvgW/Wz/wfn/8gHoAdQf1l/uvaX/SPyp/qPkX+Wfrf5af3D28f6Dx3dKf8v0L/in13+1/3f9tv7j7q/7vwV+I39D6gX4t/Jv85/Tv3Q/NTjmdf/yH/O9QLuX/j/6/+5H+d9F7+M9Cfq3/rP7N+QH2Afx/+df37+wfvf/i+eE+9/7j/Je4B/Kv6v/vP7h/l/2t+Mf/b/wH+t/dj3B/nn+E/6P+X/0/7WfYb/Mv6v/uP7z/mv/d/n////9fvJ9gv7h+yH+xf/gNQSy8kxQo19F9mLeSYoUa+i+zFvJK6olz9sBzCMucJhLLvrWA8W8kxO/6iEDm8u5/d+SNXVYt5pS37T74rriOlC0ygZUvNVWC38Qev0nSrbmfSWKCfTAGcJ1IrlJ+WhTzvFvqiMHHovc42x+uE5dpCfpPZK0aoj6fzxlrHpFo1/6gcvZhOev5tYb8l34IVF0uEFIHohWhyGVJ7pIgH/yU2tLk7ZJcvcX+m4DyIsOHZSP1cZqftJXmsNEIxQl189rU00nw+4KSo+SKALJpk4hS0+toq6Zc+57zrqHCJ7qxpbSeemLxw8VqgXzD/2c+vFoCjhPvG1UNqebZ3oLl1YcZ0Tbn9rwIsGg6vk03QsQkwvAzDwaFfAEgSDQKQCnoAP3W3KkcijYAYko6amTWMrd++jGKeT9+5578xAQbYMkbHG2NchyokZDnxcad2Js5uZKWUouCOBHUvuq87Peslq/qsApsM1Z/6SvkgrjodGth2vAQQ3nt9zzmTqR+vSeoGtxX4bWHc83TJkRCy5qVr8+dAqp6kegVpXrsrVOboPtCLVKc5M1+V4+ld0XyjwalPKUarTaMENcstUvx2MeLts91EZxF4llbWmJ366QzmXEUDubMvEptZFLTK1VpRFu3JIvMax3zHcygkRb09CXj4JYHEtpOrknWS/QWrglPYe4wFzsgX9hkleZ/oz2mKkqQAmRjyoTd7pKW1jlvGVBoTIy0a39vkBVxqJcmwLeJRIhHNiCU3SX4bbOWZ3i5QXBnHfnNg6WT5QfOljh8Pxopd06A6p+B9uTjKkpYA2G50PwiShD0d0sOWFv1rPK0szYHgAAWKiUSpaOUkfJsnIhujp8PTac6C8qe8vFCjX0IEHclag0I7PiiTLVVIKNfRfZi3kmKFHIWEsvJMUKNfRfZi3kmKFGpgAAP7/vZAADzomBrnMprSgoAfN+vQCi/XHjxYWnzs2TheBDf0KxGZkOX3I5MW2frtnzvkD3JqgCOCZ7SCEzPhFZNDb4n1Omi8FiTgVxvGMcAteFSe1v+WgeDWZqsqR/Hn+4nOi/euYDMoVaigwU/qHsiHxB2oOQIcgMI0xjCaoU+LDTvhLTpPH5a9lrhRxzM0li1iX3ke7uBImc4liTHtiEKlxCi9mh/nVAVOppsT2S5g8hbfItipwGcPRM5+w4B1VBI2rQscudVxVKBkd4o9Smh4ALmY0yR01Gh7iHKkRC5PCzjs8LdFZH7TiEMgvL3mtdDpoozJgtwbDG1gt17F1hNWE2kJJXMxmloiDyd04xJtWXJbaohUa5VMCflN8cd1n+cx9TY3tfW2gDyP5MDdZZJQz1UME095JpQLl1v/BFh+jjWPCLJ6mhOqfnTnM951pLRPmU/K8efeom+GuLhVRJbjSfiejYPoKoH+7JsO/wpQCAKgCH2GpXRVqMftOSzfjozIBGBsuVgwLWMvWdqizejFjobJ//zTQZDBpG5/IN9QFyNHVSOsz1QfcUpEezx+UT7CaHMiqpWeWGkI9zk+ywqBBE8wDim7eapp4OdhWznb+tliwmQWkrNRBU8WFVehD/u4kpgwDohDtkx0AT6nme+wX1v63WJYagvucJjR4twutLEBa+IPeoBDe4Hnm0V5gGES8w+QeL9YEu9dbD522cloKlQcTHIJ8pMRb87TGSJR4h1+/PmMzmoM+0N3QgpWo6TU8J+U+DslCA7AcEVUUS1l0/cpYsO6pDqhlkNZohGjmBXocWtR0XAKcr1XSaYzv8FkEgEteKk2tkmTKNrsn84duQs1maCLSQbxU3n47Wx+n0Xu3LedwdLe8b3eLDL+AeFXqxSOkwmyUJx/dcxEEH7cFAnmldTIoEKy3tCvFYGuebRj21OmKDL+jrfKaDN4Om1J60vZKZxrKZjtyjV2BtYQYMYdRRUFOtfPXNWGdWR2EJXOAsExbkE6etfexwz2ZEQ+IXKrmiPXTfXYFIpKv4Ch8v2inTAmVruZ/RMG8vu5W925EavlOrvggun0xUWEqFrpFEomvfv4ZlDnoHpjjgzqZRSBOEgb+X/mQMm1+dPEX83DYnIkcSdBG7ZRUf8o+1Q/FfN7ZItPOZvFY2d79Sz56DxaWw4b7PBMLvFozGThtYivBqZsjFE+VUXn6AemfUWse7HhhKW/5Jhzi7EWGB8nxNAAfxt3fYqW8Fb/xLA1gzOjYfTwrthkq7DkBoi+IErRe/ArhQck5xYP7HKdPGOKmw5JWzIX4FmXNpKdKiYCeGXzejiSy95OoQMy7eNRvLjupjO7JnBbJIND64AhzEqu18eKCWxWHqT5fUCsrQwAXqp3kJt8rDaUkmzVIukpH/oCY/Hy8kTYRzeA8MWaE0TFdRQ9Qq3NlJ23fiZShNDEROaJ0yiUTwYSZdxv9/S+abMmM0SMv7Yllh4n/UgP/Fz9P4RndjvEUaIVqXgxGPaoxaS8FaUPmD/JNOvQwBXkQYtYzRB3rQ3tGEovWZLQcGvV0qYc76SCdxWfTZWN7uiudQRMviXOjkDoZr0iqzJk2UeyIY1xhOC4st8drktyZTyhuATinHzlREtr2sg6+h+9MvW3BeL3m6hq1nnkw+1IQjpSrT5nZj+yaa9PUZKA6lkb2S/MrZsbxmMqb0gVjN3OE36D8U3ZE12M7SGUctK9gDcpinePKuSW827i8HF4Dz/ZGrHsTvTYNAfIofrmpXCa7gv0cglKl1XHZZN3f3ENJIKXQ2o5JdH24nfmtJpgYBF77oPmxFZKCOB5tJz/8PmQz1spodnHzzDufAr34iuClt4m0LqCp0n9EkRo9rQVgxiLNYF2zJdSHY0NvYalX1nRKX9pvGDkRf8k32lbOiWQbQr1eOTvAoCW+vVQv+cFVD9V4axtxii5dB4qv7PTyVkYIE+qMcrjgeDFgbMJfJXO6Va7wLkwdea2N9OLtf/Tj3n1yCAehJ8qv7ZVOem3ua/L1lnx8CWbnE607xBssyeDj77HXLwQpjMG6vPeKMDdemoa8Zq7UxHj3OoE2LW2QwzmBL+IdIa+3H+JTxO4LgTx3+YlWwDzbo8r7zdJW7I7Kf5ItUx/X4EpUeCqsT4285vDEMVl3/rDuDn04PYvIlN4zmwOqgXPsNTJ0ItjdVfHSd53csXYHbO9n+3Iyeig2b3TQ19W2QIVz5pNTvfPlNCOnwTw6KhNA8jKNtSrDqJJi/yInpm3HsLnZYSYx38kynpq51E47h6V2CLWHyT/HsrOZ+UAEerHZUnn0/PJQ4giuEc2EWtTqJWi8UjGW7LhluLUhOQ7CWxiacfAMC/z02Esh5c05BdRuSc5WLmhZGr1o1Uto4iZh19L1bxBbno5ZpJIp3WlJSOrWzW5+X+Xtm2FAjzw2by3RfZYqwRE8bjMO7LEJ4u1VCwAd0grgVkVRBvKvutXPWQGJv14f218krpoDb/HkWvPqjfpWnebw4KWejGiImxUT4bp4NFcHDZKhtcNqzd22pHUHX0kVgTMxL4cOpz5hMPkXGsZYysOEz6xjtxfObEeRrXGqb3RBsRhhWHPiSUaPak1aiFnoiAvn+wjVCovBIR389Ty+9oz+CoVxc+0ilMY7+c+ZLvGr0ztXGaBLbE9rySUR/ufVlom6zHBwU4Q3RNNiMP/58BkzFEqjo8XNWeylRrGAgd/k/U6HOuB578nXHX4MAknHwlA1z3FGiH9PluT8IU3STZGLxgN+LE0pBRvv8EhpB1NpNZx3QKzs9wiXX45PHtItGWZi18XZeIMSS0bRIUc7S7jIZWQ3nf1FP7bdtWsE7DPML/8zqhh7XNswhGOCH8vPHvq8P95+RsKVcQ3BamjfJLl29zAV/MRJBJN6lcgo5+jQdbfHyDMKj5KeLdqzvFlzSMlMV02AXbRnhde2UC1oSqt3Kdfe0rEirN03Q6i1J2cSKnUgt3mHlQfwlaez+LNZZSWpK7oVVOXtoK5F5GSc1CSUc3/vZExPSu8Tb+NbB1ZXcE6yDc1zNRUQYuSuI0mqOSjvxeWn2WwTWNdRfAgvAS/c9NevgqVhMqxgdjqFD21MY0HGFSNrZKZ7RTM8rlimHMA7XpfWOzyo0kLQfDgprgbGFIyKtkA6KZjDipE14E6/nQLQJRQ3HLOa9iCHp4a8WyIRpobxnhPCpO8XGtD8NFFXf8MM/pB6tOgGr29LgPUIRWhxfq4K3PJaFJaQyNCx0LHNwTefIHvdLJIinDmd6V/xEZNdEDf5pC2LZlbHE4kbReplWh49PBt62+S+8wnhdIXZ3yxLsUDNtL8DJYuoEDCHE0sAjaZgVKfb+7vyow6gbASd2uL6YCqYDlKYqalLFxD2tFZBpN+jPYgqAFEFsQkEoisDkGwHfR8lYs8TjAivg0DpPi8yN9QyRLGCQpkPLLIuL7DF2Zl/ZdeCevFsiNKY3FmMpAMg9xDUwX5vNIafXQ1j8uRjkM3kB9aObBobW+VIBFIpgwL1blmUPqIAEDZncoexSxfkTsiyB+/eNgG00m2v/JBiFnScl8TRhlg5u1tZqXnOS4jFKJ5HdghPRRawwmeQw0zQ7/j68FxYuLZn0ur2f8jZeNUfgIF90AN80FRYYx2Tx5d1e6BpM6ZTpwLQSWB65TR3e5xGbFpyMCVm0uS6zXJQ/KpcDl64q0HYZM1A0S4ik8YNx1Umws4iZAOsUCioQPWNhspY4Y6P0y977+PtL8fMXxpMy5ZI4txmzHkRtILcncxvDL8wMVfb+/KVqxAMoyCjKiQub/qJK7iRAeRfIq20xR5N/2s0lzFHpFHIoQnSvykP+l3BNnS5jjQXHPcGeWNT6AaLdA/Ik6FjjSRvRGkawPYNtTPqbkLKNLoaGwn372HEVsMmPyaVR1F3qAvlDX5b95mnFY1GnD/4NOUVv07Bu69wtrSVZPs/Fsx3i21wwtDhCIxtNcmWzpr/L4SIiXEFxM0LQfSTViZAbLZMfq2vzbPFpX7kX+cJ+qNr3PsFkRrNKu/OjtzcljQAN1PW39VWGaHfy4rKxAKbFoNAp7UXfVomrR2aPUoxIszEqRWmNsDK/rGeAnOnq8JN7yT4miUek9iO4Nr0lFCZ1JxF3dPNSTSch8z9EnTA84AfCIWRLFzo5yhGguM39TYaJvPyI84lY7Otk+6YwRRlIFBrajxnzYj7+eO7SgGtGH0qOPQW0ltPO7/1tr6cwhb0cRp/L2r3Rc0pxjjLgEQ5bCH8jJcKUZ59JL7Gtb4s1CBP1S+EcENH0y2yH3qS08Kez5gcD0IUESN/JycmAf3FVqZsMe8yEJQCUIyZY7IHJltPO8Bcmzj83VERWEU9UFBzjJ+dRbVl4NOy05rWoQCI7+h5OgUGQDskg7HmHcXU+UsjukzazaXCQkYH8SuVAjmJH8xIuvX5dnRQovo74fGv0cRdHRubif6AIgCB87UNTgSzJDBf/Uc97NpwyS64vwD2Sc7DmMHU/8OIRJ8/O3VDrEGPvfKKFt9+TuIgpXTu0WD2cgYM3+WEtZgZ/paNS8Bmz3rQazswSQFVlPdHQD/+HLHtRuwVMjtCY/+FiO9Eh7YNvHb6EXcDESN/2x9c5LKlwx/2NAtDUESS9p1Wgs9CndtBzgZ7yiYGio8Ah72bBEtR0NF1xq/u0H/l+9KmrwlodfV/Wrnl1hGlsPVZ5xBxf9/Do8RfPeeOQ9oLBZCI3QGM/+FejchEyaosL8j3EPoylxhNbrjhZlvAmPYcGg2p1GeA+I/XXrdtD62p+G8zeSwBYvsIOCKx9i7ss/ztv34P2yElnsBDqEYncAi3ooCNShRo4Siz9nEOqcnrWKUm6IXYMur/9/nw/FlKf6qgBDrKOtFZJI2rlmxo/xBL3UgeLQZvF1WBIRJeO9X8hyi3/XfwwyTwR21f43D/decHFVllPFpxdFM7uolarA5q1IfXYUBB7i/rxDSuNFXeKUARXO4ZBuzNmfPoMYMjt7ixTxJU/JEF7DTAq3Qtjx9SW/gMwK41j2iXxsw9GXPLhkO03gBDh0t3D2OWuz/5KghSqpG7jBR2il2EkL7bHMqZWTwgWQoTb+/4X0hciydKR+HRufnC3qc8IGCSRXgZIuUp/OOefxZDJJzx88Q2hRQpBbT1s6MfypDTRd1APVL0Ne7n7aIUX+hJ/FxoqNYQ+NxoQWaM4G6IDVSJai6Nq5lxkYALx1MDcUEdTsNwHjuoZhaacGAuJ0XNy5MlifF0x3RBoxNAWE56HDvimNfCNq3shN17NQXaDOh94P7kevFWod4t81PPmO/cj7zHHQTxQNM4NA18yhbnsWGzoBfZJE7Pw+e/YNkYBywmecWtwYEd7biKk45esapsh2Jyo3ncBg+D1472bDYUX0AEBDUgxWWlNP43/oyV9wQjcxCKbuv+VZFBT+AL2UN4kjpJM3Q/9IDuFqhx5tq4bVqtWT13x5JroBmVThBflt3MAexWk+CZGBq9KIkUz60ZGozpQnRzjkzef6MXHcKGtVY/c54yHFiEMJhWcAFr3H0UJi/n1lAJTTHLCG6mwMBf+6FBZwWql/THf4xo6GhpYXwhmT7WjNkA2due1Jqz8919Z3dO38VTkgnzPEtHGFiQn9ybVj90dXe6bZRp8af5whl5ttG3KdBNfMLuSPHd0Mpu/mbFqaozl5CiKPc5Kq/aLVgSe6Wstw0oT9pcdEy7tdZpVCcM+vBQbAmlCJT2BiqLMINjbk784PWUbn+OCqA2LSFN8G1qXuTqiel8YA2iq+O8jvgCoAdQzgRgZTXQEgQeA7354dnwjhEsgxj+H6aiv242SP00rB7ZWznOF//gyY/2Ei+4gBYly7S+yEcNPar+yi+wR/H2iOF8iOq7TAl5/iH0MJHdJiwh6+B8kAtnIQKKt7kNNHQg1jAmv9cCoF/6OOuqKJ80zb2Xxzs7Z1++NBDsXmeUwVTUmuHpn3D1+GbQy4uGUhe8iWBfoEkXCy7ZHyDdbAGPVx9ud2TfRwH62/vn9eSK+AMYW0r+9uvOueydZqqkQXgbixsQ+9I7qOiXvPWOECvsDJU0InSKFr87peOUi/Q7/to4MNdNnU409MM5eEuyYrL7cWhfjoCmZk5i6NNAV5YSSeqMx5fxXn47ktfr7Yp8W/dySeFL7Xzviyh1S5zIW5tuxb4r0msq64/D0YZhUqoKfberPiSZy8oR92HJ48tTVBu+xFeymP7n2Ahcvkj43WeVgIQJOKRhVWvWwG5KGqq9du9yKKxmuziPQ0cE1oIk3l5hvyjqj1EF3KINhjljYtZjVI+sW8NTRD8Jggdus883MtSbF/uNpZjAdaNNhVGPAm38UmrziSONt85aagYczNFj4LIPWdle1B5X+MUzKYTwadqW2NZRIv7RsTb/ElcYgET3Slw+TXFAJ3GDU3B5KeTIPH3zJeg5bjSG721J27xWFhvXmUG0K8dYY6zxGchC3OcaM6pYhQc8PptRx7guoF72oKopb++nMH27JdGyFOx7ezDqJWkjtfae5s96jxQL1X95VkuXUl6805d9QfYVb8GgfGPhg4l/SxVKnNHETh1VibMTuU1w1QXqIyC1SBCnCBcc0dlvRr9+Kzt+A+G6L5dHxMmgCO8NbsAsLByHeNyEAT6kN3/Df5eoLrvegXpjRlwQ4VcN7/c77JqSnPPZ44WKmD2OL75S/v8BZj+AHFTlanEf7mJuGCJamMPwZmFrzxZOY9aADuAMgJVEF57TozN2Py6QKcRd4SKSYSKaZYEV1c1HYsw+pxJio3BzOFSBg/zSGnhxlJJybq2ebM5F+9lHDqVArQy5tQyLGVFhlkYEdrPnUTl2FSm8G7nn0Eaj8wJMkZyUr4C6tNAXSshSltFfE0Y+jHQYp58duMmk0a/TsHOLr++T3zlfb51X4OowVNAiNW2vIyXj+4JPtq+sNeyw/mkzvcb3f9pugtDUG4wdB5NmvEzvKOBa72sogpdUMRaLGeHpxh4FOgH/+bEcBBHo70H311zvf06xfI2ZSES6CdpZXJnu9lVGgw2etQ0sCmqTauy7NZixhCcqwHsAABwaENHP6BHARJrlvks9TC1MmiaYMgw1VnArhiFN9cC0HK2AJsyvbyRPgmJhqXOfSlmiUCcIp1RJ+rHZ20D9uPf9Tw7mRTU5tQDFjW+SWTEwkXNwKK4fIIEuRBxpXy1TNeLxREqdP/YZ8a9vl3JdSJs0NHocfu1Gns+5W+X4NbJe8Hqr+g3Q9oBirkkvUTAhxUSoSUfwf07yqORvEwWBKUPeo9uI2vHR2gzEO9dJkJFCItAVFGbdKTYszhmeS2c8uRgstoNVdCsupmuhD9DJHlEZWbX6SFHhB6dPaY5NSIpgT8dLmASodZIyuZx+mjrNspSlP38ETm+Mm3mAz77EzUibXlWFuzC0P5NAS8ErqkvbVoeKHkl24aFXmFCzM48TyuU+WQ86Yd/b5SNpTUNOEqf0HRHwROd2iqin+G6GT7HVOSGXH14HROvZUUCbQalxjHVfhChubtd+mp9+e7B59sYpzTmvxV87q/HsuQwiuQNvIaVzcsgph1cjahRhTJPJHSycU/aGm9+XmSCDBz45zOmEPWLiA+/8Tf1G/okhNQoXTBQ6mC/ikeyZqDzsDzjwCOYXCdtnED44bJBSDUUi2zgKNbMajuToPUtzhDP4ANFQ76qD8MTv9+TWddK3HGbqkX5Fo3nq9qDjXUfC4T6VgPlnkr1bX/b2ByTgSzsP6qlzK+paBRPIBUb+JhJNqHdngLnWniBydi/GEEmMpqX7cat6jyqf3QJeJJeT+rXgP9FKS0/AKojqcHuicpSl5tStZ8uBokfEV9RKZg2xUGRt44ln1LeyNvpIhoJPqDWUnTN5gVCYbNo2vR2EUWtcWR9nLNFZBtC/QgQF6R246IR3sqzxPjQyH61PxaLJmyZKQwFiCx7I+XIsPCLuNYzFOIdubJEVVgmw8ltcF2zJqjzSJMRaA2qh32wT5CzmmNlYVbaloqbqH8MYdBNukhPaVPP/OrHZ1OuB6KWgc0s55kWsS+y8CHY0hb7bwnkdTJYEn2JhPzajXxTa4cTdAsmiJlb/m9eawD+MmbTs//jwJnN8q169akYH71Zt6MhnbPD1d2phCmQpOSvkdUaCkdH5mgZxl36eroHD1xGmETdWXfpyOCW+54VO78TZoSp1SD+Q9zoGy6BWGYX1aUgCRo92V7EnK+QeDqAjytYKsoAA1uQCKigM0NbQG4MggOYOIzAM16wQ9EgMh9dftXe3dZVVFUwx1Kf9+GfsKPUBkO0lUeRV4U3u5j4zS7ho2fl5gzeBwCa2aT5bo/1NUyFk/CBgD9gJk4z7WNLH2ZG9wyl9aqe3vGz2qIcv7ExKV28Xf0pon/HP9RvCCiof0QOzPOy2KCxeyvgDnv3zOPAqzQOFqKzDOU4IXTFEj7LU+98zC9c1anFCUSip4XIGG9CvLfGcrRfyRY8kaNU8pKo2Cg2CdZG1sp9R3J1TP4pE+mi/jQPqFs24Djq+Rt5ed2lnT8m8Divvn0FUzS2H7zey3Ym+tHv5JAgj4nMC5m6+G7oofAkyil+7vKoNd9baJC5flb7j5iLqtM78K1GAv5MjI08uIB8d3KCrEF+CzFLdGic9D9cBwcKaTa/JWjNoAG/SlXRvfF0H6i/aeilJQW4128sxppyTtTTt3srEXhlNZC0mTF9c5RdemWOuij/bdj3o2Ck2oMnxyF9O3lmNU47zkdU/sGTWXJefZtP4uFu1l7up1JviyX3tgUNVcqF6o7VPMYBOXmh50RyXaz8exnXyTlSCeWEX86kJUEj16o0sQHF7p92u7J2WaBg5NRFhvLTKwHhYfiGEWuQ8LSlyGp+IvAFvbKG5eoSTnmkc4TKAe8yqAqldIiRelOMbQd/5bExyjRuV9yZoymwdeTd/c+Q/EinUpm1FDyykSW/fbwAvRxFyGpzaj+IOVklirUKiayqyc+Xjpa3E7cm3LnsBMg1mBAqF/4+rKAtHMPCkln8lB3bSVyO9Yv/dImM0t9nHqslI+PNu2vwuubCJTBf29qYa+TKviIrI2D0HEPXZiKdNvWg+99RjReuE32f4NS1Wir9zA7gdRFhmtobmd8jafnXcSYygA5JeivY1foWaHYEZ3jbcfNYQNK6YPaDAX35H8NZGleJabigXQjaSiMLjgkOEUfaJ6lufqOMAwRGLRgNno+ejjXDkICLMOEO0VhcQ9/HSJmDx5nQ/7/Pc4/wcXZs347p2YbSZzf66beW16QVwshcu/+k+QFeIXGNRzGQXq/D51jokKXkZ/z5Cw0JXdqe8fgI/FVrUk1E9Z7Oiirk2LIy4Jo+B0ZIebk7/QnG/w8ru5XZeDfgJHd2nmqqMRSFxDYK+iukkDih2mwHeOvVDg4AO/M9Gr+O8OCnxN3uV3nShJiXrIgpRU+OyUynlSP49FQ1GXIYHN+UkASkvflQAqU2wux9WQdyJHmWWLhIvEZB04Zj6p4DoeHLwa0xPvA1A8FcljS0uDFQ1KrPXRA9MjmMwzNQvSHI2BTFklJCIIVmt1ZAUx5RA31vnQRcXcLgO0vCQD7GXuwe6D7gv5BjQNOK5KbiKz0LwgC0Mu5XpxmI+s5tgxOrLlKdgHzmxbacvWPtHnVNaSIQJSzw65/Xaufl/OW8whuh/PW5JzVpWWDgNkNNSeaiADJmI8c2CfMJVJfpX4gBON5tVchsimE0KurApv6N6oYFIOgKLta+7HhJmykddFlbDk9jZVG0Bte1akJdgNLR8gtgKX8Jg8H9OJQZqrNLQnIzpfohNkmUVrLSJkKcXQWMvlTesYBtNQtQNMjfJyTdU6mLrT1pnpBDiXnkdMKsfDusyFYqePwbtTiVb/wZ3+fhBkZKNzB3noCW/+u9PvJpMObn6SCudOz4v9a7iFecWC52Y20qgPvRL4J6tQFBDUDaE+Gya2TFakjPzy1fmFBge0pVUqOiq//wUwtfXZCHQnzRznMDeGNvAMZ0CCTgC9tHIpE6I7ss1M01asX1Dp3pge+pufCUJzlBE/8g4Ysea4fEKoK7r2c3C8HO14+OgGMge/pooLyES0EDiLRtKE7zk+wHFX/1E3zLORcCXzxqQb/4W5gKp3BpPtD2Msau7WAHSbv1l+A7njxyKJ+KMKQyzlMplA7+Cl7Al5DeJQB7SIusk498/GGMr5KJYC1pVF0gMPMp/habcuqzlI/gWLWlenM30V5lTs39AEO93TdmTQneP4gGIjsGGsq7s5vgijqc5mHqxBfXrheazp0LSLaGN55NPUTH4V/duLMMoOLuE0/jhvcBmWbZiWuREQofANBQu8aDRkmk6LXeBoZxs9I8MgDCkMcEBpPAeTwFcnzE1oxxSEd9iO9O1T8UIA7lxj8wvSvbJE7Q/stAtkbUD0f2A4Kpm2qVNCPBc61CcrgaSKm+vhaQI4GTAvyjs+1Y2tqY9Fwv40rsUFQtBZRFszbMxeNUWehm32M1vZwSNFGD3XcT+1nNXwV3HGT+/9Z17A4zX99UBtSEAixrFd9w/rVLfcqeGgdn75DxIqWnfErMtXBg+AOOdniRYtPhJH/JEKE+8RVskq3Wv5BC3cswUjj/eYmZfc8jteJu+8TrTKZacl2/P0AZSOSmZZklocS462RoMq1nZ6V1/nkGlyhB96tj9ajcsw1w+CHxl/gAh6axSL3vg/7ZzWJxeNuxfO69oldUGmKQCpXMbQpD81KPd/900D1lqeAPAExI6wFbyU7tVdldC/ymZX64fPyaEtQ//Au74n2lw7SNCnxOfO1UNPepF3BxV6gXCz0RSHrkyWvbO6LWsRdhCLo4UBa4E2KuQ0lDMkcXA6Hqs16p02CjYfihxmAwl4r1deiZKQz35eTlpk/mipho4OIiyrW+YwvaLDNHvqmoLeVhh0BVHMV+8atF6ns5AnlytDoLnUgKnjI8lSRevuOH07MBu5UjnoaNDmFs7sU5ySEft82iphXk14LUBGoV5CRDKpevqo31SBWAugO1NdtSVuerf9kVkRBgX/dl+N+5DktP2KVLg5VBQXvSyg1xNEHH57omjXsQNeYFfCNQeZiwbx5cZW8dYFEFH4KGdSXDCFcBjbSnUszCyOvpIOoSHFbFmkXZhrc3MPRo0MGFWNUwHdO+g+uXtQRd+Pn1UYIBRalEb3nPoyiokHF5a4FmGsTh72QTT/WaC7aT8XJS2n9K81UHTgawjCC/2lFsmvGjqa8dREEp9nI5MyxtI/1d9jdp1G6H8HqK6zI2oj0rxKql8GOqQTAb+gbyNwD9o/iP8Ev9/bESEJP+AJAH/HD2jbxRW6Xms2kbfNQi6I/2gTiWuaeTayf7ch25bfF0rHBsWasWa2HVna24zUaogMK7T7e25wTu+gUc5VDlSkhd0vYRPgfO1rwaQ++eKlNI/NbKpOjmgE9jGyBlvzZQEmjROs7UCGOg8vEIt9fVonLrX1me/qnxIewKCpVy07kffLOf/dygWSL+YeYM4RUNGeg/972fKauugigqqdGeNqXz6mjtO3CdvkBTIAAAAAA==';
+
+const DADOS_INICIAIS = [
+  {
+    "codcli": "16123",
+    "nf": "2030219",
+    "cliente": "IRMAOS MOSOLI LTDA",
+    "endereco": "",
+    "cidade": "ARARUNA",
+    "volumes": "",
+    "rotaCarga": "507",
+    "placa": "APB0042",
+    "valor": "309,37",
+    "status": "pendente",
+    "motivo": "",
+    "obs": "",
+    "horario": null,
+    "id": "ytliwq0d1"
+  },
+  {
+    "codcli": "82232",
+    "nf": "2049661",
+    "cliente": "P C COSTA REPRESENTACOES",
+    "endereco": "",
+    "cidade": "CAMPO MOURÃO",
+    "volumes": "",
+    "rotaCarga": "507",
+    "placa": "APB0042",
+    "valor": "223,72",
+    "status": "pendente",
+    "motivo": "",
+    "obs": "",
+    "horario": null,
+    "id": "htcr88s6x"
+  },
+  {
+    "codcli": "82232",
+    "nf": "2049662",
+    "cliente": "P C COSTA REPRESENTACOES",
+    "endereco": "",
+    "cidade": "CAMPO MOURÃO",
+    "volumes": "",
+    "rotaCarga": "507",
+    "placa": "APB0042",
+    "valor": "223,72",
+    "status": "pendente",
+    "motivo": "",
+    "obs": "",
+    "horario": null,
+    "id": "7qxbmp52e"
+  },
+  {
+    "codcli": "82101",
+    "nf": "2052015",
+    "cliente": "ROBSON FELIPE BALLAO DOS SANTOS",
+    "endereco": "",
+    "cidade": "CAMPO MOURÃO",
+    "volumes": "",
+    "rotaCarga": "507",
+    "placa": "APB0042",
+    "valor": "900,77",
+    "status": "pendente",
+    "motivo": "",
+    "obs": "",
+    "horario": null,
+    "id": "wjbxy8xhf"
+  },
+  {
+    "codcli": "10736",
+    "nf": "2053126",
+    "cliente": "ISAIAS DOS SANTOS - PANIFICADORA",
+    "endereco": "",
+    "cidade": "CAMPO MOURÃO",
+    "volumes": "",
+    "rotaCarga": "507",
+    "placa": "APB0042",
+    "valor": "616,56",
+    "status": "pendente",
+    "motivo": "",
+    "obs": "",
+    "horario": null,
+    "id": "771rsjiyk"
+  },
+  {
+    "codcli": "20596",
+    "nf": "2053127",
+    "cliente": "ELIZANDRA VIEIRA DE MELO",
+    "endereco": "",
+    "cidade": "CAMPO MOURÃO",
+    "volumes": "",
+    "rotaCarga": "507",
+    "placa": "APB0042",
+    "valor": "414,30",
+    "status": "pendente",
+    "motivo": "",
+    "obs": "",
+    "horario": null,
+    "id": "kflul5i2y"
+  },
+  {
+    "codcli": "17847",
+    "nf": "2053128",
+    "cliente": "D IBA & CIA LTDA",
+    "endereco": "",
+    "cidade": "CAMPO MOURÃO",
+    "volumes": "",
+    "rotaCarga": "507",
+    "placa": "APB0042",
+    "valor": "881,88",
+    "status": "pendente",
+    "motivo": "",
+    "obs": "",
+    "horario": null,
+    "id": "ncqnzovsn"
+  },
+  {
+    "codcli": "17002",
+    "nf": "2053130",
+    "cliente": "PANIFICADORA BELA MASSA LTDA",
+    "endereco": "",
+    "cidade": "CAMPO MOURÃO",
+    "volumes": "",
+    "rotaCarga": "507",
+    "placa": "APB0042",
+    "valor": "1.803,14",
+    "status": "pendente",
+    "motivo": "",
+    "obs": "",
+    "horario": null,
+    "id": "bh5rorjok"
+  },
+  {
+    "codcli": "2992",
+    "nf": "2053131",
+    "cliente": "SUPERM TRADICAO LTDA",
+    "endereco": "",
+    "cidade": "CAMPO MOURÃO",
+    "volumes": "",
+    "rotaCarga": "507",
+    "placa": "APB0042",
+    "valor": "1.478,53",
+    "status": "pendente",
+    "motivo": "",
+    "obs": "",
+    "horario": null,
+    "id": "j84t1jgnj"
+  },
+  {
+    "codcli": "5244",
+    "nf": "2053132",
+    "cliente": "WELCOFF PANIFICADORA LTDA",
+    "endereco": "",
+    "cidade": "CAMPO MOURÃO",
+    "volumes": "",
+    "rotaCarga": "507",
+    "placa": "APB0042",
+    "valor": "167,76",
+    "status": "pendente",
+    "motivo": "",
+    "obs": "",
+    "horario": null,
+    "id": "0xah2mazx"
+  },
+  {
+    "codcli": "15530",
+    "nf": "2053133",
+    "cliente": "SAVARIS E SAVARIS LTDA",
+    "endereco": "",
+    "cidade": "ARARUNA",
+    "volumes": "",
+    "rotaCarga": "507",
+    "placa": "APB0042",
+    "valor": "586,14",
+    "status": "pendente",
+    "motivo": "",
+    "obs": "",
+    "horario": null,
+    "id": "j94axb7js"
+  },
+  {
+    "codcli": "87820",
+    "nf": "2053134",
+    "cliente": "JOVANI NOGUEIRA ROSA",
+    "endereco": "",
+    "cidade": "ARARUNA",
+    "volumes": "",
+    "rotaCarga": "507",
+    "placa": "APB0042",
+    "valor": "175,00",
+    "status": "pendente",
+    "motivo": "",
+    "obs": "",
+    "horario": null,
+    "id": "x3hiy1mcj"
+  },
+  {
+    "codcli": "88670",
+    "nf": "2053135",
+    "cliente": "COSTA SANTOS PANIFICADORA LTDA",
+    "endereco": "",
+    "cidade": "ENGENHEIRO",
+    "volumes": "",
+    "rotaCarga": "507",
+    "placa": "APB0042",
+    "valor": "300,32",
+    "status": "pendente",
+    "motivo": "",
+    "obs": "",
+    "horario": null,
+    "id": "hodleghfz"
+  },
+  {
+    "codcli": "2922",
+    "nf": "2053136",
+    "cliente": "H M VENDRAMINI E CIA LTDA",
+    "endereco": "",
+    "cidade": "ENGENHEIRO",
+    "volumes": "",
+    "rotaCarga": "507",
+    "placa": "APB0042",
+    "valor": "2.542,28",
+    "status": "pendente",
+    "motivo": "",
+    "obs": "",
+    "horario": null,
+    "id": "nofhrkqu3"
+  },
+  {
+    "codcli": "14427",
+    "nf": "2053137",
+    "cliente": "M H MAIA GUERRA & CIA LTDA",
+    "endereco": "",
+    "cidade": "QUINTA DO SOL",
+    "volumes": "",
+    "rotaCarga": "507",
+    "placa": "APB0042",
+    "valor": "426,19",
+    "status": "pendente",
+    "motivo": "",
+    "obs": "",
+    "horario": null,
+    "id": "k6mca86mj"
+  },
+  {
+    "codcli": "4973",
+    "nf": "2053138",
+    "cliente": "LUIZ CARLOS MANTOVANI ME",
+    "endereco": "",
+    "cidade": "ENGENHEIRO",
+    "volumes": "",
+    "rotaCarga": "507",
+    "placa": "APB0042",
+    "valor": "238,97",
+    "status": "pendente",
+    "motivo": "",
+    "obs": "",
+    "horario": null,
+    "id": "bpbic1imx"
+  },
+  {
+    "codcli": "83276",
+    "nf": "2053139",
+    "cliente": "E P DOS SANTOS ME",
+    "endereco": "",
+    "cidade": "ENGENHEIRO",
+    "volumes": "",
+    "rotaCarga": "507",
+    "placa": "APB0042",
+    "valor": "196,27",
+    "status": "pendente",
+    "motivo": "",
+    "obs": "",
+    "horario": null,
+    "id": "5eogr7vyg"
+  },
+  {
+    "codcli": "2922",
+    "nf": "2053140",
+    "cliente": "H M VENDRAMINI E CIA LTDA",
+    "endereco": "",
+    "cidade": "ENGENHEIRO",
+    "volumes": "",
+    "rotaCarga": "507",
+    "placa": "APB0042",
+    "valor": "673,65",
+    "status": "pendente",
+    "motivo": "",
+    "obs": "",
+    "horario": null,
+    "id": "vaep1xrnw"
+  },
+  {
+    "codcli": "4973",
+    "nf": "2053141",
+    "cliente": "LUIZ CARLOS MANTOVANI ME",
+    "endereco": "",
+    "cidade": "ENGENHEIRO",
+    "volumes": "",
+    "rotaCarga": "507",
+    "placa": "APB0042",
+    "valor": "83,91",
+    "status": "pendente",
+    "motivo": "",
+    "obs": "",
+    "horario": null,
+    "id": "8u6rayl0a"
+  },
+  {
+    "codcli": "87018",
+    "nf": "2053142",
+    "cliente": "MERCEARIA E LANCHONETE",
+    "endereco": "",
+    "cidade": "CAMPO MOURÃO",
+    "volumes": "",
+    "rotaCarga": "507",
+    "placa": "APB0042",
+    "valor": "484,99",
+    "status": "pendente",
+    "motivo": "",
+    "obs": "",
+    "horario": null,
+    "id": "uzf6b4oxe"
+  },
+  {
+    "codcli": "86825",
+    "nf": "2053143",
+    "cliente": "CLEBERSON SOPRANO",
+    "endereco": "",
+    "cidade": "CAMPO MOURÃO",
+    "volumes": "",
+    "rotaCarga": "507",
+    "placa": "APB0042",
+    "valor": "405,42",
+    "status": "pendente",
+    "motivo": "",
+    "obs": "",
+    "horario": null,
+    "id": "vtie8jwux"
+  },
+  {
+    "codcli": "86738",
+    "nf": "2053144",
+    "cliente": "JULIANO AMADOR",
+    "endereco": "",
+    "cidade": "PEABIRU",
+    "volumes": "",
+    "rotaCarga": "507",
+    "placa": "APB0042",
+    "valor": "391,88",
+    "status": "pendente",
+    "motivo": "",
+    "obs": "",
+    "horario": null,
+    "id": "y7krzt1qw"
+  },
+  {
+    "codcli": "89907",
+    "nf": "2053145",
+    "cliente": "PALOMA LAIER ROMANIN",
+    "endereco": "",
+    "cidade": "CAMPO MOURÃO",
+    "volumes": "",
+    "rotaCarga": "507",
+    "placa": "APB0042",
+    "valor": "492,98",
+    "status": "pendente",
+    "motivo": "",
+    "obs": "",
+    "horario": null,
+    "id": "8g0wvq85p"
+  },
+  {
+    "codcli": "93467",
+    "nf": "2053146",
+    "cliente": "JOSE ANTONIO DE SOUZA JUNIOR",
+    "endereco": "",
+    "cidade": "CAMPO MOURÃO",
+    "volumes": "",
+    "rotaCarga": "507",
+    "placa": "APB0042",
+    "valor": "551,28",
+    "status": "pendente",
+    "motivo": "",
+    "obs": "",
+    "horario": null,
+    "id": "90nmkflgt"
+  },
+  {
+    "codcli": "93056",
+    "nf": "2053147",
+    "cliente": "JOCA CAMPOS DISTRIBUIDORA DE",
+    "endereco": "",
+    "cidade": "CAMPO MOURÃO",
+    "volumes": "",
+    "rotaCarga": "507",
+    "placa": "APB0042",
+    "valor": "2.352,22",
+    "status": "pendente",
+    "motivo": "",
+    "obs": "",
+    "horario": null,
+    "id": "9wqyd3kre"
+  },
+  {
+    "codcli": "3514",
+    "nf": "2053148",
+    "cliente": "RABELO E BRUNETTA LTDA ME",
+    "endereco": "",
+    "cidade": "CAMPO MOURÃO",
+    "volumes": "",
+    "rotaCarga": "507",
+    "placa": "APB0042",
+    "valor": "397,68",
+    "status": "pendente",
+    "motivo": "",
+    "obs": "",
+    "horario": null,
+    "id": "ddoa3xs6p"
+  },
+  {
+    "codcli": "89006",
+    "nf": "2053149",
+    "cliente": "I A DA SILVA OLIVEIRA LTDA",
+    "endereco": "",
+    "cidade": "CAMPO MOURÃO",
+    "volumes": "",
+    "rotaCarga": "507",
+    "placa": "APB0042",
+    "valor": "986,13",
+    "status": "pendente",
+    "motivo": "",
+    "obs": "",
+    "horario": null,
+    "id": "17ibkydg7"
+  },
+  {
+    "codcli": "87878",
+    "nf": "2053150",
+    "cliente": "VAGNER JOSE DE OLIVEIRA",
+    "endereco": "",
+    "cidade": "CAMPO MOURÃO",
+    "volumes": "",
+    "rotaCarga": "507",
+    "placa": "APB0042",
+    "valor": "274,32",
+    "status": "pendente",
+    "motivo": "",
+    "obs": "",
+    "horario": null,
+    "id": "pky8d1y7l"
+  },
+  {
+    "codcli": "91765",
+    "nf": "2053151",
+    "cliente": "ADELIR FREITAS DA SILVA",
+    "endereco": "",
+    "cidade": "CAMPO MOURÃO",
+    "volumes": "",
+    "rotaCarga": "507",
+    "placa": "APB0042",
+    "valor": "350,72",
+    "status": "pendente",
+    "motivo": "",
+    "obs": "",
+    "horario": null,
+    "id": "x21oc945h"
+  },
+  {
+    "codcli": "18677",
+    "nf": "2053152",
+    "cliente": "DENISE ALVES VIEIRA FERREIRA SANTOS",
+    "endereco": "",
+    "cidade": "CAMPO MOURÃO",
+    "volumes": "",
+    "rotaCarga": "507",
+    "placa": "APB0042",
+    "valor": "528,31",
+    "status": "pendente",
+    "motivo": "",
+    "obs": "",
+    "horario": null,
+    "id": "0aoho8kbd"
+  },
+  {
+    "codcli": "93540",
+    "nf": "2053153",
+    "cliente": "DIOGO AUGUSTO DE OLIVEIRA BABICZ",
+    "endereco": "",
+    "cidade": "CAMPO MOURÃO",
+    "volumes": "",
+    "rotaCarga": "507",
+    "placa": "APB0042",
+    "valor": "364,41",
+    "status": "pendente",
+    "motivo": "",
+    "obs": "",
+    "horario": null,
+    "id": "nk2gpr509"
+  },
+  {
+    "codcli": "20538",
+    "nf": "2053154",
+    "cliente": "RICA BAR E RESTAURANTE LTDA",
+    "endereco": "",
+    "cidade": "CAMPO MOURÃO",
+    "volumes": "",
+    "rotaCarga": "507",
+    "placa": "APB0042",
+    "valor": "377,46",
+    "status": "pendente",
+    "motivo": "",
+    "obs": "",
+    "horario": null,
+    "id": "kpk27ty7t"
+  },
+  {
+    "codcli": "14383",
+    "nf": "2053312",
+    "cliente": "ACACIO CORREA AMORIM",
+    "endereco": "",
+    "cidade": "CAMPO MOURÃO",
+    "volumes": "",
+    "rotaCarga": "507",
+    "placa": "APB0042",
+    "valor": "377,45",
+    "status": "pendente",
+    "motivo": "",
+    "obs": "",
+    "horario": null,
+    "id": "gci40l2wa"
+  },
+  {
+    "codcli": "85860",
+    "nf": "2053313",
+    "cliente": "EDLANDER SOUCEK",
+    "endereco": "",
+    "cidade": "PEABIRU",
+    "volumes": "",
+    "rotaCarga": "507",
+    "placa": "APB0042",
+    "valor": "1.621,44",
+    "status": "pendente",
+    "motivo": "",
+    "obs": "",
+    "horario": null,
+    "id": "x0gj8zyv7"
+  },
+  {
+    "codcli": "81227",
+    "nf": "2053314",
+    "cliente": "A PAULA GOMES DE ALMEIDA",
+    "endereco": "",
+    "cidade": "ENGENHEIRO",
+    "volumes": "",
+    "rotaCarga": "507",
+    "placa": "APB0042",
+    "valor": "252,80",
+    "status": "pendente",
+    "motivo": "",
+    "obs": "",
+    "horario": null,
+    "id": "iodejwzya"
+  },
+  {
+    "codcli": "92429",
+    "nf": "2053654",
+    "cliente": "GEOVANI ALVES TEIXEIRA LTDA",
+    "endereco": "",
+    "cidade": "QUINTA DO SOL",
+    "volumes": "",
+    "rotaCarga": "507",
+    "placa": "APB0042",
+    "valor": "367,62",
+    "status": "pendente",
+    "motivo": "",
+    "obs": "",
+    "horario": null,
+    "id": "85k38xjrb"
+  }
+];
+
+const STORAGE_KEY = 'difripar_entregas_v1';
+
+const STATUS = {
+  pendente: { label: 'Pendente', color: '#E8A33D', bg: '#FFF6E8' },
+  entregue: { label: 'Entregue', color: '#2E8B57', bg: '#EAF6EF' },
+  nao_entregue: { label: 'Não entregue', color: '#D64545', bg: '#FDEBEB' },
+};
+
+const MOTIVOS = ['Cliente ausente', 'Recusado', 'Endereço não localizado', 'Avaria na mercadoria', 'Estabelecimento fechado', 'Outro'];
+
+function uid() {
+  return Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+}
+
+function normalizar(s) {
+  return String(s || '')
+    .toLowerCase()
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .trim();
+}
+
+function acha(headers, ...termos) {
+  for (let i = 0; i < headers.length; i++) {
+    const h = normalizar(headers[i]);
+    if (termos.some(t => h.includes(t))) return i;
+  }
+  return -1;
+}
+
+function chaveParada(item) {
+  if (item.codcli) return `c:${normalizar(item.codcli)}`;
+  return `${normalizar(item.cliente)}|${normalizar(item.cidade)}`;
+}
+
+function parseValorBR(v) {
+  const n = parseFloat(String(v || '0').replace(/\./g, '').replace(',', '.'));
+  return isNaN(n) ? 0 : n;
+}
+
+function formatBRL(v) {
+  return v.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+function extrairCarroPlaca(texto) {
+  let carro = '', placa = '';
+  const mCarro = texto.match(/Carro:?\s*(\d+)/i);
+  if (mCarro) carro = mCarro[1];
+  const mPlaca = texto.match(/Placa:?\s*([A-Z]{2,3}\s?\d\s?[A-Z0-9]\s?\d{2,3})/i);
+  if (mPlaca) placa = mPlaca[1].replace(/\s+/g, '');
+  return { carro, placa };
+}
+
+const ROMANEIO_LINHA_RE = /^(\d{3,9})\s+(.+?)\s+(\d{5,9})\s+([A-ZÀ-Úa-zà-ú][A-ZÀ-Úa-zà-ú\s]*?)\s+(\d{1,3})\s+(A\s?VISTA|BOLETO)\s*(.*?)\s*-?\s*([\d.]+,\d{2})\s*$/;
+
+function parseRomaneioTexto(texto) {
+  const linhas = texto.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+  const itens = [];
+  let carroAtual = '', placaAtual = '';
+  const carros = [];
+  for (const linhaOriginal of linhas) {
+    const mCarro = linhaOriginal.match(/Carro:?\s*(\d+)/i);
+    if (mCarro) {
+      carroAtual = mCarro[1];
+      if (!carros.includes(carroAtual)) carros.push(carroAtual);
+    }
+    const mPlaca = linhaOriginal.match(/Placa:?\s*([A-Z]{2,3}\s?\d\s?[A-Z0-9]\s?\d{2,3})/i);
+    if (mPlaca) placaAtual = mPlaca[1].replace(/\s+/g, '');
+
+    const linha = linhaOriginal.replace(/([A-Za-zÀ-ÿ.])(\d{5,})/g, '$1 $2');
+    const m = linha.match(ROMANEIO_LINHA_RE);
+    if (!m) continue;
+    const [, codcli, cliente, nf, cidade, , , , valor] = m;
+    itens.push({
+      id: uid(), codcli, nf, cliente: cliente.trim(), endereco: '', cidade: cidade.trim(),
+      volumes: '', rotaCarga: carroAtual, placa: placaAtual, valor,
+      status: 'pendente', motivo: '', obs: '', horario: null,
+    });
+  }
+  const somasEsperadas = [...texto.matchAll(/Entregas:\s*(\d+)\s*Notas:\s*(\d+)/gi)].map(m => parseInt(m[2], 10));
+  const notasEsperadas = somasEsperadas.length ? somasEsperadas.reduce((a, b) => a + b, 0) : null;
+  return { itens, carros, notasEsperadas };
+}
+
+function AppEntregas() {
+  const [items, setItems] = useState(DADOS_INICIAIS);
+  const [loaded, setLoaded] = useState(false);
+  const [filter, setFilter] = useState('todos');
+  const [filtroCarro, setFiltroCarro] = useState('todos');
+  const [query, setQuery] = useState('');
+  const [openId, setOpenId] = useState(null);
+  const [showAdd, setShowAdd] = useState(false);
+  const [showImport, setShowImport] = useState(false);
+  const [showConfig, setShowConfig] = useState(false);
+  const [showRelatorio, setShowRelatorio] = useState(false);
+  const [showVisaoGeral, setShowVisaoGeral] = useState(false);
+  const [relatorioTab, setRelatorioTab] = useState('entregue');
+  const [relatorioComoTexto, setRelatorioComoTexto] = useState(false);
+  const [confirmZerar, setConfirmZerar] = useState(false);
+  const [importTab, setImportTab] = useState('arquivo');
+  const [pasteText, setPasteText] = useState('');
+  const [importInfo, setImportInfo] = useState(null);
+  const [importErro, setImportErro] = useState('');
+  const fileInputRef = useRef(null);
+  const [motivoFor, setMotivoFor] = useState(null);
+  const [confirmFor, setConfirmFor] = useState(null);
+  const [recebedor, setRecebedor] = useState('');
+  const [hasSignature, setHasSignature] = useState(false);
+  const canvasRef = useRef(null);
+  const drawingRef = useRef(false);
+  const [form, setForm] = useState({ nf: '', cliente: '', endereco: '', cidade: '', volumes: '', rotaCarga: '', placa: '' });
+  const [rota, setRota] = useState({ nome: 'Carro 507', motorista: '' });
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    let unsub = null;
+    let ativo = true;
+
+    function aplicarValor(raw) {
+      if (!raw) return;
+      try {
+        const parsed = JSON.parse(raw);
+        if (parsed.items && parsed.items.length > 0) setItems(parsed.items);
+        if (parsed.rota) setRota(parsed.rota);
+      } catch (e) {
+        // ignora valor corrompido
+      }
+    }
+
+    (async () => {
+      if (typeof window.storage.subscribe === 'function') {
+        // modo com sincronização em tempo real (standalone + Firestore)
+        unsub = window.storage.subscribe(STORAGE_KEY, true, (raw) => {
+          if (!ativo) return;
+          aplicarValor(raw);
+          setLoaded(true);
+        });
+      } else {
+        // modo compatível com o ambiente do Claude (busca única)
+        try {
+          const res = await window.storage.get(STORAGE_KEY, true);
+          if (res && res.value) aplicarValor(res.value);
+        } catch (e) {
+          // sem dados ainda
+        }
+        setLoaded(true);
+      }
+    })();
+
+    return () => { ativo = false; if (unsub) unsub(); };
+  }, []);
+
+  useEffect(() => {
+    if (!loaded) return;
+    (async () => {
+      setSaving(true);
+      try {
+        await window.storage.set(STORAGE_KEY, JSON.stringify({ items, rota }), true);
+      } catch (e) {
+        console.error('Erro ao salvar', e);
+      }
+      setSaving(false);
+    })();
+  }, [items, rota, loaded]);
+
+  const paradas = useMemo(() => {
+    const map = new Map();
+    for (const it of items) {
+      const key = chaveParada(it);
+      if (!map.has(key)) {
+        map.set(key, { key, cliente: it.cliente, cidade: it.cidade, itens: [] });
+      }
+      map.get(key).itens.push(it);
+    }
+    return Array.from(map.values()).map(p => {
+      const todasEntregues = p.itens.every(i => i.status === 'entregue');
+      const todasNaoEntregues = p.itens.every(i => i.status === 'nao_entregue');
+      const status = todasEntregues ? 'entregue' : todasNaoEntregues ? 'nao_entregue' : 'pendente';
+      const valorTotal = p.itens.reduce((s, i) => s + parseValorBR(i.valor), 0);
+      const rotaCarga = p.itens.find(i => i.rotaCarga)?.rotaCarga || '';
+      const placa = p.itens.find(i => i.placa)?.placa || '';
+      const ultimo = p.itens.reduce((a, b) => (b.horario && (!a || b.horario > a.horario)) ? b : a, null);
+      return { ...p, status, valorTotal, rotaCarga, placa, horario: ultimo?.horario || null, assinatura: ultimo?.assinatura || '', recebedor: ultimo?.recebedor || '', motivo: ultimo?.motivo || '' };
+    });
+  }, [items]);
+
+  const counts = useMemo(() => {
+    const c = { pendente: 0, entregue: 0, nao_entregue: 0 };
+    paradas.forEach(p => c[p.status]++);
+    return c;
+  }, [paradas]);
+
+  const total = paradas.length;
+  const progresso = total ? Math.round((counts.entregue / total) * 100) : 0;
+
+  const paradasEntregues = useMemo(() => paradas.filter(p => p.status === 'entregue'), [paradas]);
+  const paradasNaoEntregues = useMemo(() => paradas.filter(p => p.status === 'nao_entregue'), [paradas]);
+  const paradasPendentes = useMemo(() => paradas.filter(p => p.status === 'pendente'), [paradas]);
+
+  function valorSecao(lista) {
+    return lista.reduce((s, p) => s + p.valorTotal, 0);
+  }
+
+  function gerarRelatorioTexto() {
+    const linhas = [];
+    linhas.push(`RELATÓRIO DE ENTREGAS — ${rota.nome}${rota.motorista ? ' · ' + rota.motorista : ''}`);
+    linhas.push(`Gerado em ${new Date().toLocaleString('pt-BR')}`);
+    linhas.push('');
+    linhas.push(`Total: ${total} parada(s) — ${counts.entregue} entregues, ${counts.nao_entregue} não entregues, ${counts.pendente} pendentes`);
+    linhas.push('');
+
+    const secao = (titulo, lista) => {
+      linhas.push(`— ${titulo} (${lista.length}) — R$ ${formatBRL(valorSecao(lista))}`);
+      if (lista.length === 0) linhas.push('  (nenhuma)');
+      lista.forEach(p => {
+        const nfs = p.itens.map(i => i.nf).join(', ');
+        let l = `  ${p.cliente} — ${p.cidade} — NF ${nfs}`;
+        if (p.valorTotal > 0) l += ` — R$ ${formatBRL(p.valorTotal)}`;
+        if (p.status === 'entregue') {
+          if (p.horario) l += ` — entregue às ${new Date(p.horario).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}`;
+          if (p.recebedor) l += ` — recebido por ${p.recebedor}`;
+        }
+        if (p.status === 'nao_entregue' && p.motivo) l += ` — motivo: ${p.motivo}`;
+        linhas.push(l);
+      });
+      linhas.push('');
+    };
+
+    secao('ENTREGUES', paradasEntregues);
+    secao('NÃO ENTREGUES', paradasNaoEntregues);
+    secao('PENDENTES', paradasPendentes);
+    return linhas.join('\n');
+  }
+
+  const resumoPorCarro = useMemo(() => {
+    const map = new Map();
+    for (const p of paradas) {
+      const chave = p.rotaCarga || '— sem carro —';
+      if (!map.has(chave)) {
+        map.set(chave, { carro: chave, placa: p.placa, total: 0, entregue: 0, nao_entregue: 0, pendente: 0, valorEntregue: 0, valorTotal: 0 });
+      }
+      const r = map.get(chave);
+      r.total++;
+      r[p.status]++;
+      r.valorTotal += p.valorTotal;
+      if (p.status === 'entregue') r.valorEntregue += p.valorTotal;
+      if (!r.placa && p.placa) r.placa = p.placa;
+    }
+    return Array.from(map.values()).sort((a, b) => String(a.carro).localeCompare(String(b.carro), 'pt-BR', { numeric: true }));
+  }, [paradas]);
+
+  const carrosDisponiveis = useMemo(() => {
+    const set = new Set();
+    paradas.forEach(p => { if (p.rotaCarga) set.add(p.rotaCarga); });
+    return Array.from(set).sort();
+  }, [paradas]);
+
+  const filtered = useMemo(() => {
+    return paradas
+      .filter(p => filter === 'todos' || p.status === filter)
+      .filter(p => filtroCarro === 'todos' || p.rotaCarga === filtroCarro)
+      .filter(p => {
+        if (!query.trim()) return true;
+        const q = query.toLowerCase();
+        const nfs = p.itens.map(i => i.nf).join(' ');
+        return (nfs + p.cliente + p.cidade).toLowerCase().includes(q);
+      })
+      .sort((a, b) => (a.status === 'pendente' ? -1 : 1) - (b.status === 'pendente' ? -1 : 1));
+  }, [paradas, filter, filtroCarro, query]);
+
+  function addItem() {
+    if (!form.nf.trim() || !form.cliente.trim()) return;
+    setItems(prev => [...prev, { id: uid(), ...form, status: 'pendente', motivo: '', obs: '', horario: null }]);
+    setForm({ nf: '', cliente: '', endereco: '', cidade: '', volumes: '', rotaCarga: '', placa: '' });
+    setShowAdd(false);
+  }
+
+  async function handleImportFile(e) {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+    setImportErro('');
+    setImportInfo(null);
+    try {
+      const buf = await file.arrayBuffer();
+      const wb = XLSX.read(buf, { type: 'array' });
+      const wsName = wb.SheetNames[0];
+      const rows = XLSX.utils.sheet_to_json(wb.Sheets[wsName], { header: 1, raw: false, defval: '' });
+
+      // o arquivo pode conter o romaneio completo, com vários carros/rotas seguidos.
+      // localiza cada bloco "Carro: N" e processa cada um separadamente.
+      const marcadores = [];
+      for (let r = 0; r < rows.length; r++) {
+        if (/carro:?\s*\d+/i.test(rows[r].join(' '))) marcadores.push(r);
+      }
+      const segmentos = marcadores.length > 0
+        ? marcadores.map((inicio, idx) => ({ inicio, fim: idx + 1 < marcadores.length ? marcadores[idx + 1] : rows.length }))
+        : [{ inicio: 0, fim: rows.length }];
+
+      function scanCol(segRows, hIdx, colStart, colEnd, testFn) {
+        if (colStart == null || colEnd == null || colStart < 0 || colEnd < 0) return -1;
+        for (let c = Math.max(0, colStart); c <= colEnd; c++) {
+          let hits = 0, total = 0;
+          for (let r = hIdx + 1; r < Math.min(segRows.length, hIdx + 15); r++) {
+            const v = String(segRows[r][c] ?? '').trim();
+            if (!v) continue;
+            total++;
+            if (testFn(v)) hits++;
+          }
+          if (total >= 2 && hits / total >= 0.7) return c;
+        }
+        return -1;
+      }
+
+      const novos = [];
+      const carrosEncontrados = [];
+      let segmentosSemColunas = 0;
+
+      for (const seg of segmentos) {
+        const segRows = rows.slice(seg.inicio, seg.fim);
+        const textoTopo = segRows.slice(0, 15).map(r => r.join(' ')).join('\n');
+        const { carro, placa } = extrairCarroPlaca(textoTopo);
+        if (carro && !carrosEncontrados.includes(carro)) carrosEncontrados.push(carro);
+
+        let headerRowIdx = -1, headers = [];
+        for (let r = 0; r < Math.min(segRows.length, 20); r++) {
+          const row = segRows[r];
+          const hits = [
+            acha(row, 'codcli', 'cod cli'),
+            acha(row, 'razao social', 'cliente', 'destinat'),
+            acha(row, 'cidade', 'municipio'),
+            acha(row, 'nota', 'nf', 'n.f'),
+            acha(row, 'rota', 'carga', 'carro'),
+            acha(row, 'placa'),
+            acha(row, 'endereco', 'endereço', 'logradouro'),
+            acha(row, 'vlr', 'valor'),
+          ].filter(v => v >= 0).length;
+          if (hits >= 2) { headerRowIdx = r; headers = row; break; }
+        }
+        if (headerRowIdx === -1) { segmentosSemColunas++; continue; }
+
+        const clienteCol = acha(headers, 'razao social', 'cliente', 'destinat');
+        const codcliCol = acha(headers, 'codcli', 'cod cli', 'cod. cliente');
+        const cidadeCol = acha(headers, 'cidade', 'municipio');
+        const bancoCol = acha(headers, 'banco');
+        const enderecoCol = acha(headers, 'endereco', 'endereço', 'logradouro');
+        const rotaCargaColHeader = acha(headers, 'carro', 'rota', 'carga');
+        const placaColHeader = acha(headers, 'placa');
+        const volumesCol = acha(headers, 'volume', 'qtd', 'quantidade');
+        let nfCol = acha(headers, 'nota fiscal', 'n.f', 'nota', 'nf');
+        let valorCol = acha(headers, 'vlr nf', 'valor nf', 'vlr', 'valor');
+
+        if (nfCol < 0 && clienteCol >= 0 && cidadeCol > clienteCol) {
+          nfCol = scanCol(segRows, headerRowIdx, clienteCol + 1, cidadeCol - 1, v => /^\d{5,9}$/.test(v));
+        }
+        if (valorCol < 0 && bancoCol >= 0) {
+          valorCol = scanCol(segRows, headerRowIdx, bancoCol + 1, bancoCol + 3, v => /^[\d.]+,\d{2}$/.test(v));
+        } else if (valorCol < 0 && cidadeCol >= 0) {
+          valorCol = scanCol(segRows, headerRowIdx, cidadeCol + 1, cidadeCol + 10, v => /^[\d.]+,\d{2}$/.test(v));
+        }
+
+        for (let r = headerRowIdx + 1; r < segRows.length; r++) {
+          const row = segRows[r];
+          const nf = nfCol >= 0 ? String(row[nfCol] || '').trim() : '';
+          const cliente = clienteCol >= 0 ? String(row[clienteCol] || '').trim() : '';
+          if (!nf && !cliente) continue;
+          novos.push({
+            id: uid(),
+            codcli: codcliCol >= 0 ? String(row[codcliCol] || '').trim() : '',
+            nf: nf || '—',
+            cliente: cliente || 'Sem nome',
+            endereco: enderecoCol >= 0 ? String(row[enderecoCol] || '').trim() : '',
+            cidade: cidadeCol >= 0 ? String(row[cidadeCol] || '').trim() : '',
+            volumes: volumesCol >= 0 ? String(row[volumesCol] || '').trim() : '',
+            rotaCarga: (rotaCargaColHeader >= 0 ? String(row[rotaCargaColHeader] || '').trim() : '') || carro,
+            placa: (placaColHeader >= 0 ? String(row[placaColHeader] || '').trim() : '') || placa,
+            valor: valorCol >= 0 ? String(row[valorCol] || '').trim() : '',
+            status: 'pendente', motivo: '', obs: '', horario: null,
+          });
+        }
+      }
+
+      if (novos.length === 0) {
+        setImportErro('O arquivo foi lido, mas nenhuma linha com Nota Fiscal ou Cliente foi encontrada. Verifique se a planilha tem colunas como Codcli, Razão Social e Cidade.');
+        return;
+      }
+
+      setItems(prev => [...prev, ...novos]);
+      setImportInfo({ total: novos.length, carros: carrosEncontrados, avisoParcial: segmentosSemColunas > 0 });
+    } catch (err) {
+      setImportErro('Não foi possível ler esse arquivo. Confirme que é um .xlsx, .xls ou .csv válido.');
+    } finally {
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  }
+
+  function handleImportTexto() {
+    setImportErro('');
+    setImportInfo(null);
+    if (!pasteText.trim()) {
+      setImportErro('Cole o texto do romaneio antes de processar.');
+      return;
+    }
+    const { itens, carros, notasEsperadas } = parseRomaneioTexto(pasteText);
+    if (itens.length === 0) {
+      setImportErro('Não consegui reconhecer nenhuma linha de nota nesse texto. Confira se o texto foi colado sem alterações, com uma nota por linha.');
+      return;
+    }
+    setItems(prev => [...prev, ...itens]);
+    let aviso = '';
+    if (notasEsperadas && itens.length !== notasEsperadas) {
+      aviso = ` O romaneio indica ${notasEsperadas} nota(s) ao todo; confira se todas as linhas foram coladas corretamente.`;
+    }
+    setImportInfo({ total: itens.length, aviso, carros });
+    setPasteText('');
+  }
+
+  function abrirConfirmacao(key) {
+    setConfirmFor(key);
+    setRecebedor('');
+    setHasSignature(false);
+  }
+
+  function getPos(e, canvas) {
+    const rect = canvas.getBoundingClientRect();
+    const scaleX = canvas.width / rect.width;
+    const scaleY = canvas.height / rect.height;
+    return { x: (e.clientX - rect.left) * scaleX, y: (e.clientY - rect.top) * scaleY };
+  }
+
+  function iniciarTraço(e) {
+    e.preventDefault();
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    drawingRef.current = true;
+    const ctx = canvas.getContext('2d');
+    const pos = getPos(e, canvas);
+    ctx.beginPath();
+    ctx.moveTo(pos.x, pos.y);
+  }
+
+  function desenhar(e) {
+    if (!drawingRef.current) return;
+    e.preventDefault();
+    const canvas = canvasRef.current;
+    const ctx = canvas.getContext('2d');
+    const pos = getPos(e, canvas);
+    ctx.lineTo(pos.x, pos.y);
+    ctx.strokeStyle = '#0B2545';
+    ctx.lineWidth = 2.4;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.stroke();
+    if (!hasSignature) setHasSignature(true);
+  }
+
+  function finalizarTraço() {
+    drawingRef.current = false;
+  }
+
+  function limparAssinatura() {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    canvas.getContext('2d').clearRect(0, 0, canvas.width, canvas.height);
+    setHasSignature(false);
+  }
+
+  function confirmarComAssinatura() {
+    if (!hasSignature || !confirmFor) return;
+    const assinatura = canvasRef.current.toDataURL('image/png');
+    const horario = new Date().toISOString();
+    const recebedorFinal = recebedor.trim();
+    setItems(prev => prev.map(i => chaveParada(i) === confirmFor
+      ? { ...i, status: 'entregue', motivo: '', horario, assinatura, recebedor: recebedorFinal }
+      : i));
+    setConfirmFor(null);
+    setOpenId(null);
+  }
+
+  function marcarNaoEntregue(key, motivo) {
+    setItems(prev => prev.map(i => chaveParada(i) === key
+      ? { ...i, status: 'nao_entregue', motivo, horario: new Date().toISOString() }
+      : i));
+    setMotivoFor(null);
+    setOpenId(null);
+  }
+
+  function reabrir(key) {
+    setItems(prev => prev.map(i => chaveParada(i) === key
+      ? { ...i, status: 'pendente', motivo: '', horario: null, assinatura: '', recebedor: '' }
+      : i));
+  }
+
+  function removeParada(key) {
+    setItems(prev => prev.filter(i => chaveParada(i) !== key));
+  }
+
+  function removeNota(id) {
+    setItems(prev => prev.filter(i => i.id !== id));
+  }
+
+  function zerarCarga() {
+    setItems([]);
+    setRota({ nome: 'Rota do dia', motorista: '' });
+    setConfirmZerar(false);
+    setShowConfig(false);
+  }
+
+  return (
+    <div style={{ fontFamily: "'Inter', system-ui, sans-serif", background: '#F5F7F9', minHeight: '100vh', paddingBottom: 90 }}>
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700;800&family=Inter:wght@400;500;600;700&display=swap');
+        * { box-sizing: border-box; }
+        .num { font-family: 'Barlow Condensed', sans-serif; }
+        @keyframes stampIn { 0% { transform: scale(2.2) rotate(-14deg); opacity: 0; } 60% { transform: scale(0.9) rotate(-8deg); opacity: 1; } 100% { transform: scale(1) rotate(-8deg); opacity: 1; } }
+        .stamp { animation: stampIn 0.35s ease-out; }
+        .card { transition: box-shadow .15s ease, transform .1s ease; }
+        .card:active { transform: scale(0.99); }
+        button { font-family: inherit; }
+        ::-webkit-scrollbar { width: 0; height: 0; }
+        @media print {
+          body * { visibility: hidden; }
+          #relatorio-imprimir, #relatorio-imprimir * { visibility: visible; }
+          #relatorio-imprimir { position: absolute; left: 0; top: 0; width: 100%; }
+        }
+      `}</style>
+
+      {/* Header */}
+      <div style={{ background: '#0B2545', color: '#fff', padding: '20px 16px 24px', borderRadius: '0 0 22px 22px', position: 'sticky', top: 0, zIndex: 20 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
+          <div style={{ background: '#fff', borderRadius: 10, padding: '6px 9px', display: 'flex', alignItems: 'center', flexShrink: 0, boxShadow: '0 1px 3px rgba(0,0,0,0.15)' }}>
+            <img src={LOGO_SRC} alt="Difripar 32 anos" style={{ height: 30, width: 'auto', display: 'block' }} />
+          </div>
+          <div style={{ flex: 1 }}>
+            <input
+              value={rota.nome}
+              onChange={e => setRota(r => ({ ...r, nome: e.target.value }))}
+              style={{ background: 'transparent', border: 'none', color: '#fff', fontSize: 16, fontWeight: 700, width: '100%', outline: 'none' }}
+            />
+            <input
+              value={rota.motorista}
+              onChange={e => setRota(r => ({ ...r, motorista: e.target.value }))}
+              placeholder="Nome do motorista"
+              style={{ background: 'transparent', border: 'none', color: '#9FB3C8', fontSize: 12.5, width: '100%', outline: 'none' }}
+            />
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 6 }}>
+            <span style={{ fontSize: 10, color: saving ? '#E8A33D' : '#6FCF97', letterSpacing: 0.5 }}>
+              {saving ? 'salvando…' : 'sincronizado'}
+            </span>
+            <button
+              onClick={() => setShowConfig(true)}
+              style={{ background: 'rgba(255,255,255,0.12)', border: 'none', borderRadius: 8, padding: 6, display: 'flex', cursor: 'pointer' }}
+            >
+              <Settings size={15} color="#9FB3C8" />
+            </button>
+          </div>
+        </div>
+
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 6 }}>
+          <span className="num" style={{ fontSize: 30, fontWeight: 800, lineHeight: 1 }}>{counts.entregue}<span style={{ fontSize: 16, color: '#9FB3C8' }}>/{total}</span></span>
+          <span style={{ fontSize: 12.5, color: '#9FB3C8' }}>paradas confirmadas</span>
+        </div>
+        <div style={{ height: 8, background: 'rgba(255,255,255,0.15)', borderRadius: 6, overflow: 'hidden' }}>
+          <div style={{ width: `${progresso}%`, height: '100%', background: 'linear-gradient(90deg,#2E8B57,#6FCF97)', transition: 'width .3s ease' }} />
+        </div>
+      </div>
+
+      {/* Filtros */}
+      <div style={{ padding: '14px 16px 0', display: 'flex', gap: 8, overflowX: 'auto' }}>
+        {[
+          { key: 'todos', label: 'Todos', n: total },
+          { key: 'pendente', label: 'Pendentes', n: counts.pendente },
+          { key: 'entregue', label: 'Entregues', n: counts.entregue },
+          { key: 'nao_entregue', label: 'Não entregues', n: counts.nao_entregue },
+        ].map(f => (
+          <button
+            key={f.key}
+            onClick={() => setFilter(f.key)}
+            style={{
+              flexShrink: 0, padding: '7px 13px', borderRadius: 20, border: 'none', cursor: 'pointer',
+              background: filter === f.key ? '#0B2545' : '#fff', color: filter === f.key ? '#fff' : '#0B2545',
+              fontSize: 12.5, fontWeight: 600, boxShadow: '0 1px 3px rgba(11,37,69,0.1)'
+            }}
+          >
+            {f.label} · {f.n}
+          </button>
+        ))}
+      </div>
+
+      {carrosDisponiveis.length > 1 && (
+        <div style={{ padding: '8px 16px 0', display: 'flex', gap: 8, overflowX: 'auto' }}>
+          <button
+            onClick={() => setFiltroCarro('todos')}
+            style={{
+              flexShrink: 0, padding: '6px 12px', borderRadius: 20, border: '1.5px solid #E3E9EF', cursor: 'pointer',
+              background: filtroCarro === 'todos' ? '#1E5F8C' : '#fff', color: filtroCarro === 'todos' ? '#fff' : '#1E5F8C',
+              fontSize: 12, fontWeight: 600
+            }}
+          >
+            Todos os carros
+          </button>
+          {carrosDisponiveis.map(c => (
+            <button
+              key={c}
+              onClick={() => setFiltroCarro(c)}
+              style={{
+                flexShrink: 0, padding: '6px 12px', borderRadius: 20, border: '1.5px solid #E3E9EF', cursor: 'pointer',
+                background: filtroCarro === c ? '#1E5F8C' : '#fff', color: filtroCarro === c ? '#fff' : '#1E5F8C',
+                fontSize: 12, fontWeight: 600
+              }}
+            >
+              Carro {c}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {/* Busca + Importar */}
+      <div style={{ padding: '10px 16px', display: 'flex', gap: 8 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: '#fff', borderRadius: 12, padding: '9px 12px', boxShadow: '0 1px 3px rgba(11,37,69,0.08)', flex: 1 }}>
+          <Search size={16} color="#9FB3C8" />
+          <input
+            value={query}
+            onChange={e => setQuery(e.target.value)}
+            placeholder="Buscar por NF, cliente ou cidade"
+            style={{ border: 'none', outline: 'none', fontSize: 13.5, width: '100%', color: '#0B2545' }}
+          />
+        </div>
+        <button
+          onClick={() => setShowImport(true)}
+          style={{ background: '#1E5F8C', border: 'none', borderRadius: 12, padding: '0 14px', color: '#fff', display: 'flex', alignItems: 'center', cursor: 'pointer', boxShadow: '0 1px 3px rgba(11,37,69,0.15)' }}
+        >
+          <FileSpreadsheet size={18} />
+        </button>
+      </div>
+
+      {/* Lista */}
+      <div style={{ padding: '4px 16px', display: 'flex', flexDirection: 'column', gap: 10 }}>
+        {loaded && filtered.length === 0 && (
+          <div style={{ textAlign: 'center', padding: '50px 20px', color: '#9FB3C8' }}>
+            <Package size={34} style={{ marginBottom: 10, opacity: 0.6 }} />
+            <div style={{ fontSize: 14, fontWeight: 600, color: '#5A7089' }}>Nenhuma nota por aqui</div>
+            <div style={{ fontSize: 12.5, marginTop: 3 }}>Toque em "+ Adicionar nota" para começar a rota.</div>
+          </div>
+        )}
+
+        {filtered.map(parada => {
+          const st = STATUS[parada.status];
+          const isOpen = openId === parada.key;
+          const multi = parada.itens.length > 1;
+          return (
+            <div key={parada.key} className="card" style={{ background: '#fff', borderRadius: 14, boxShadow: '0 1px 4px rgba(11,37,69,0.08)', overflow: 'hidden' }}>
+              <div
+                onClick={() => setOpenId(isOpen ? null : parada.key)}
+                style={{ padding: '13px 14px', cursor: 'pointer', display: 'flex', gap: 12, alignItems: 'center' }}
+              >
+                <div style={{ width: 4, alignSelf: 'stretch', borderRadius: 3, background: st.color, minHeight: 36 }} />
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 2, flexWrap: 'wrap' }}>
+                    <span className="num" style={{ fontSize: 17, fontWeight: 700, color: '#0B2545' }}>
+                      {multi ? `${parada.itens.length} notas` : `NF ${parada.itens[0].nf}`}
+                    </span>
+                    <span style={{ fontSize: 10, fontWeight: 700, color: st.color, background: st.bg, padding: '2px 7px', borderRadius: 20 }}>
+                      {st.label}
+                    </span>
+                  </div>
+                  <div style={{ fontSize: 13.5, fontWeight: 600, color: '#1E3A5F', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                    {parada.cliente}
+                  </div>
+                  <div style={{ fontSize: 12, color: '#7A8CA0', display: 'flex', alignItems: 'center', gap: 4, marginTop: 1 }}>
+                    <MapPin size={11} /> {parada.cidade}
+                  </div>
+                  <div style={{ display: 'flex', gap: 6, marginTop: 4, flexWrap: 'wrap' }}>
+                    {parada.rotaCarga && <span style={{ fontSize: 10.5, fontWeight: 600, color: '#1E5F8C', background: '#EAF2F8', padding: '2px 7px', borderRadius: 6 }}>Carro {parada.rotaCarga}</span>}
+                    {parada.placa && <span style={{ fontSize: 10.5, fontWeight: 600, color: '#5A7089', background: '#EFF2F5', padding: '2px 7px', borderRadius: 6 }}>{parada.placa}</span>}
+                    {parada.valorTotal > 0 && <span style={{ fontSize: 10.5, fontWeight: 700, color: '#2E8B57', background: '#EAF6EF', padding: '2px 7px', borderRadius: 6 }}>R$ {formatBRL(parada.valorTotal)}</span>}
+                  </div>
+                </div>
+                <ChevronDown size={18} color="#B7C4D2" style={{ transform: isOpen ? 'rotate(180deg)' : 'none', transition: 'transform .15s' }} />
+              </div>
+
+              {isOpen && (
+                <div style={{ padding: '0 14px 14px', borderTop: '1px dashed #E3E9EF' }}>
+                  <div style={{ padding: '10px 0', display: 'flex', flexDirection: 'column', gap: 6 }}>
+                    {parada.itens.map(it => (
+                      <div key={it.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: 12, color: '#5A7089', background: '#F5F7F9', borderRadius: 8, padding: '6px 9px' }}>
+                        <span>NF <strong style={{ color: '#0B2545' }}>{it.nf}</strong>{it.valor ? ` · R$ ${it.valor}` : ''}</span>
+                        <button onClick={() => removeNota(it.id)} style={{ background: 'none', border: 'none', color: '#C7D0DA', cursor: 'pointer', padding: 2 }}>
+                          <X size={13} />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+
+                  {parada.horario && (
+                    <div style={{ display: 'flex', gap: 4, alignItems: 'center', fontSize: 12, color: '#5A7089', marginBottom: 8 }}>
+                      <Clock size={11} /> {new Date(parada.horario).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
+                    </div>
+                  )}
+
+                  {parada.status === 'nao_entregue' && parada.motivo && (
+                    <div style={{ fontSize: 12, color: '#D64545', background: '#FDEBEB', padding: '7px 10px', borderRadius: 8, marginBottom: 10 }}>
+                      <AlertTriangle size={12} style={{ marginRight: 4, verticalAlign: -1 }} />
+                      Motivo: {parada.motivo}
+                    </div>
+                  )}
+
+                  {parada.status === 'entregue' && parada.assinatura && (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10, background: '#F5F9FC', border: '1px solid #E3E9EF', borderRadius: 10, padding: '8px 10px', marginBottom: 10 }}>
+                      <img src={parada.assinatura} alt="Assinatura do canhoto" style={{ height: 34, background: '#fff', borderRadius: 5, border: '1px solid #E3E9EF' }} />
+                      <div style={{ fontSize: 11.5, color: '#5A7089', lineHeight: 1.3 }}>
+                        {parada.recebedor && <div style={{ fontWeight: 700, color: '#0B2545' }}>{parada.recebedor}</div>}
+                        <div>Canhoto assinado</div>
+                      </div>
+                    </div>
+                  )}
+
+                  {parada.status === 'pendente' && (
+                    <div style={{ display: 'flex', gap: 8 }}>
+                      <button
+                        onClick={() => abrirConfirmacao(parada.key)}
+                        style={{ flex: 1, background: '#2E8B57', color: '#fff', border: 'none', borderRadius: 10, padding: '11px 0', fontWeight: 700, fontSize: 13.5, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, cursor: 'pointer' }}
+                      >
+                        <Check size={16} /> Confirmar entrega
+                      </button>
+                      <button
+                        onClick={() => setMotivoFor(parada.key)}
+                        style={{ background: '#fff', color: '#D64545', border: '1.5px solid #F2C9C9', borderRadius: 10, padding: '11px 14px', fontWeight: 700, fontSize: 13.5, cursor: 'pointer' }}
+                      >
+                        <X size={16} />
+                      </button>
+                    </div>
+                  )}
+
+                  {parada.status !== 'pendente' && (
+                    <button
+                      onClick={() => reabrir(parada.key)}
+                      style={{ background: 'none', border: 'none', color: '#7A8CA0', fontSize: 12.5, display: 'flex', alignItems: 'center', gap: 5, cursor: 'pointer', padding: '4px 0' }}
+                    >
+                      <RotateCcw size={12} /> Reabrir / corrigir baixa
+                    </button>
+                  )}
+
+                  <button onClick={() => removeParada(parada.key)} style={{ background: 'none', border: 'none', color: '#C7D0DA', fontSize: 11.5, marginTop: 6, cursor: 'pointer' }}>
+                    Remover parada da lista
+                  </button>
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Botão flutuante adicionar */}
+      <button
+        onClick={() => setShowAdd(true)}
+        style={{
+          position: 'fixed', bottom: 20, left: 16, right: 16, background: '#0B2545', color: '#fff', border: 'none',
+          borderRadius: 14, padding: '15px 0', fontWeight: 700, fontSize: 14.5, display: 'flex', alignItems: 'center',
+          justifyContent: 'center', gap: 8, boxShadow: '0 6px 18px rgba(11,37,69,0.35)', cursor: 'pointer', zIndex: 15
+        }}
+      >
+        <Plus size={18} /> Adicionar nota fiscal
+      </button>
+
+      {/* Modal adicionar */}
+      {showAdd && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(11,37,69,0.45)', display: 'flex', alignItems: 'flex-end', zIndex: 30 }} onClick={() => setShowAdd(false)}>
+          <div onClick={e => e.stopPropagation()} style={{ background: '#fff', width: '100%', borderRadius: '20px 20px 0 0', padding: '20px 18px 24px', maxHeight: '85vh', overflowY: 'auto' }}>
+            <div style={{ width: 40, height: 4, background: '#E3E9EF', borderRadius: 3, margin: '0 auto 16px' }} />
+            <div style={{ fontSize: 16, fontWeight: 700, color: '#0B2545', marginBottom: 14 }}>Nova nota fiscal</div>
+            {[
+              { key: 'nf', label: 'Número da NF', placeholder: 'Ex: 123456' },
+              { key: 'cliente', label: 'Cliente', placeholder: 'Nome do estabelecimento' },
+              { key: 'endereco', label: 'Endereço', placeholder: 'Rua, número' },
+              { key: 'cidade', label: 'Cidade', placeholder: 'Ex: Londrina' },
+              { key: 'rotaCarga', label: 'Rota / Carga (opcional)', placeholder: 'Ex: R3 ou Carga 12' },
+              { key: 'placa', label: 'Placa do veículo (opcional)', placeholder: 'Ex: ABC1D23' },
+              { key: 'volumes', label: 'Volumes (opcional)', placeholder: 'Ex: 3' },
+            ].map(f => (
+              <div key={f.key} style={{ marginBottom: 12 }}>
+                <label style={{ fontSize: 12, color: '#5A7089', fontWeight: 600 }}>{f.label}</label>
+                <input
+                  value={form[f.key]}
+                  onChange={e => setForm(prev => ({ ...prev, [f.key]: e.target.value }))}
+                  placeholder={f.placeholder}
+                  style={{ width: '100%', marginTop: 4, padding: '11px 12px', borderRadius: 10, border: '1.5px solid #E3E9EF', fontSize: 14, outline: 'none' }}
+                />
+              </div>
+            ))}
+            <button
+              onClick={addItem}
+              disabled={!form.nf.trim() || !form.cliente.trim()}
+              style={{ width: '100%', background: (!form.nf.trim() || !form.cliente.trim()) ? '#C7D0DA' : '#0B2545', color: '#fff', border: 'none', borderRadius: 12, padding: '13px 0', fontWeight: 700, fontSize: 14, marginTop: 6, cursor: 'pointer' }}
+            >
+              Adicionar à rota
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Modal importar */}
+      {showImport && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(11,37,69,0.45)', display: 'flex', alignItems: 'flex-end', zIndex: 30 }} onClick={() => setShowImport(false)}>
+          <div onClick={e => e.stopPropagation()} style={{ background: '#fff', width: '100%', borderRadius: '20px 20px 0 0', padding: '20px 18px 24px', maxHeight: '88vh', overflowY: 'auto' }}>
+            <div style={{ width: 40, height: 4, background: '#E3E9EF', borderRadius: 3, margin: '0 auto 16px' }} />
+            <div style={{ fontSize: 16, fontWeight: 700, color: '#0B2545', marginBottom: 14 }}>Importar romaneio</div>
+
+            <div style={{ display: 'flex', gap: 6, marginBottom: 16, background: '#F5F7F9', borderRadius: 10, padding: 4 }}>
+              <button
+                onClick={() => setImportTab('arquivo')}
+                style={{ flex: 1, border: 'none', borderRadius: 8, padding: '9px 0', fontSize: 12.5, fontWeight: 700, cursor: 'pointer', background: importTab === 'arquivo' ? '#0B2545' : 'transparent', color: importTab === 'arquivo' ? '#fff' : '#5A7089' }}
+              >
+                Excel / CSV
+              </button>
+              <button
+                onClick={() => setImportTab('texto')}
+                style={{ flex: 1, border: 'none', borderRadius: 8, padding: '9px 0', fontSize: 12.5, fontWeight: 700, cursor: 'pointer', background: importTab === 'texto' ? '#0B2545' : 'transparent', color: importTab === 'texto' ? '#fff' : '#5A7089' }}
+              >
+                Colar texto do PDF
+              </button>
+            </div>
+
+            {importTab === 'arquivo' && (
+              <>
+                <div style={{ fontSize: 12.5, color: '#7A8CA0', marginBottom: 16, lineHeight: 1.5 }}>
+                  Envie o romaneio em .xlsx, .xls ou .csv. Codcli, Razão Social, N.F., Cidade, Carro, Placa e Valor são detectados automaticamente pelo cabeçalho.
+                </div>
+                <div style={{ border: '2px dashed #B7CBE0', borderRadius: 14, padding: '18px 14px', background: '#F5F9FC', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8 }}>
+                  <Upload size={22} color="#1E5F8C" />
+                  <span style={{ fontSize: 12.5, fontWeight: 700, color: '#1E5F8C' }}>Escolha o arquivo (.xlsx, .xls ou .csv)</span>
+                  <input
+                    type="file"
+                    accept=".xlsx,.xls,.csv"
+                    onChange={handleImportFile}
+                    style={{ width: '100%', fontSize: 12.5, color: '#5A7089' }}
+                  />
+                </div>
+              </>
+            )}
+
+            {importTab === 'texto' && (
+              <>
+                <div style={{ fontSize: 12.5, color: '#7A8CA0', marginBottom: 10, lineHeight: 1.5 }}>
+                  Abra o PDF do romaneio, selecione todo o texto (Ctrl+A / tocar e segurar → selecionar tudo), copie e cole abaixo. Carro, Placa e as notas são reconhecidos automaticamente.
+                </div>
+                <textarea
+                  value={pasteText}
+                  onChange={e => setPasteText(e.target.value)}
+                  placeholder={'Cole aqui o texto do romaneio...\nEx: Listagem do Romaneio do Carro: 500...\nPlaca: APB0042\n93510 CLIENTE LTDA 2050062 CIDADE 57 BOLETO 07/14 ITAU - 1.608,60'}
+                  style={{ width: '100%', minHeight: 160, borderRadius: 12, border: '1.5px solid #E3E9EF', padding: 12, fontSize: 12.5, fontFamily: 'monospace', outline: 'none', resize: 'vertical' }}
+                />
+                <button
+                  onClick={handleImportTexto}
+                  disabled={!pasteText.trim()}
+                  style={{ width: '100%', marginTop: 10, background: !pasteText.trim() ? '#C7D0DA' : '#1E5F8C', color: '#fff', border: 'none', borderRadius: 12, padding: '13px 0', fontWeight: 700, fontSize: 14, cursor: 'pointer' }}
+                >
+                  Processar texto colado
+                </button>
+              </>
+            )}
+
+            {importErro && (
+              <div style={{ marginTop: 14, fontSize: 12.5, color: '#D64545', background: '#FDEBEB', padding: '10px 12px', borderRadius: 10 }}>
+                <AlertTriangle size={13} style={{ marginRight: 5, verticalAlign: -2 }} />{importErro}
+              </div>
+            )}
+
+            {importInfo && (
+              <div style={{ marginTop: 14, fontSize: 12.5, color: '#2E8B57', background: '#EAF6EF', padding: '10px 12px', borderRadius: 10 }}>
+                <Check size={13} style={{ marginRight: 5, verticalAlign: -2 }} />
+                {importInfo.total} nota(s) importada(s){importInfo.carros && importInfo.carros.length > 0 ? ` — Carro(s) ${importInfo.carros.join(', ')}` : ''}.
+                {importInfo.avisoParcial && <div style={{ color: '#B8860B', marginTop: 4 }}>Algum trecho do arquivo não foi reconhecido — confira se todas as notas entraram.</div>}
+                {importInfo.aviso && <div style={{ color: '#B8860B', marginTop: 4 }}>{importInfo.aviso}</div>}
+              </div>
+            )}
+
+            <button onClick={() => { setShowImport(false); setImportInfo(null); setImportErro(''); }} style={{ width: '100%', marginTop: 14, background: 'none', border: 'none', color: '#7A8CA0', fontSize: 13, cursor: 'pointer', padding: '6px 0' }}>
+              Fechar
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Modal confirmar entrega com assinatura do canhoto */}
+      {confirmFor && (() => {
+        const parada = paradas.find(p => p.key === confirmFor);
+        if (!parada) return null;
+        const nfs = parada.itens.map(i => i.nf).join(', ');
+        return (
+          <div style={{ position: 'fixed', inset: 0, background: 'rgba(11,37,69,0.5)', display: 'flex', alignItems: 'flex-end', zIndex: 30 }} onClick={() => setConfirmFor(null)}>
+            <div onClick={e => e.stopPropagation()} style={{ background: '#fff', width: '100%', borderRadius: '20px 20px 0 0', padding: '20px 18px 24px' }}>
+              <div style={{ width: 40, height: 4, background: '#E3E9EF', borderRadius: 3, margin: '0 auto 16px' }} />
+              <div style={{ fontSize: 16, fontWeight: 700, color: '#0B2545' }}>
+                Confirmar entrega {parada.itens.length > 1 ? `— ${parada.itens.length} notas` : `— NF ${parada.itens[0].nf}`}
+              </div>
+              <div style={{ fontSize: 12.5, color: '#7A8CA0', marginBottom: 14 }}>{parada.cliente} · {parada.cidade}{parada.itens.length > 1 ? ` · NFs ${nfs}` : ''}</div>
+
+              <label style={{ fontSize: 12, color: '#5A7089', fontWeight: 600 }}>Nome de quem recebeu (opcional)</label>
+              <input
+                value={recebedor}
+                onChange={e => setRecebedor(e.target.value)}
+                placeholder="Ex: João, no balcão"
+                style={{ width: '100%', marginTop: 4, marginBottom: 14, padding: '11px 12px', borderRadius: 10, border: '1.5px solid #E3E9EF', fontSize: 14, outline: 'none' }}
+              />
+
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                <label style={{ fontSize: 12, color: '#5A7089', fontWeight: 600 }}>
+                  <PenTool size={12} style={{ verticalAlign: -1, marginRight: 4 }} />Assinatura do canhoto
+                </label>
+                <button onClick={limparAssinatura} style={{ background: 'none', border: 'none', color: '#7A8CA0', fontSize: 11.5, display: 'flex', alignItems: 'center', gap: 4, cursor: 'pointer' }}>
+                  <Eraser size={12} /> Limpar
+                </button>
+              </div>
+
+              <div style={{ position: 'relative', borderRadius: 12, border: '1.5px dashed #B7CBE0', background: '#FAFCFE', overflow: 'hidden' }}>
+                {!hasSignature && (
+                  <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 13, color: '#B7C4D2', pointerEvents: 'none' }}>
+                    Assine aqui com o dedo
+                  </div>
+                )}
+                <canvas
+                  ref={canvasRef}
+                  width={320}
+                  height={150}
+                  style={{ width: '100%', height: 150, display: 'block', touchAction: 'none' }}
+                  onPointerDown={iniciarTraço}
+                  onPointerMove={desenhar}
+                  onPointerUp={finalizarTraço}
+                  onPointerLeave={finalizarTraço}
+                />
+              </div>
+
+              <button
+                onClick={confirmarComAssinatura}
+                disabled={!hasSignature}
+                style={{ width: '100%', marginTop: 16, background: !hasSignature ? '#C7D0DA' : '#2E8B57', color: '#fff', border: 'none', borderRadius: 12, padding: '13px 0', fontWeight: 700, fontSize: 14, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, cursor: hasSignature ? 'pointer' : 'not-allowed' }}
+              >
+                <Check size={16} /> Confirmar entrega
+              </button>
+              <button onClick={() => setConfirmFor(null)} style={{ width: '100%', marginTop: 8, background: 'none', border: 'none', color: '#7A8CA0', fontSize: 13, cursor: 'pointer', padding: '6px 0' }}>
+                Cancelar
+              </button>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* Visão geral por carro */}
+      {showVisaoGeral && (
+        <div style={{ position: 'fixed', inset: 0, background: '#F5F7F9', zIndex: 40, display: 'flex', flexDirection: 'column' }}>
+          <div style={{ background: '#0B2545', color: '#fff', padding: '18px 16px 14px', display: 'flex', alignItems: 'center', gap: 10 }}>
+            <button onClick={() => setShowVisaoGeral(false)} style={{ background: 'rgba(255,255,255,0.12)', border: 'none', borderRadius: 8, padding: 7, display: 'flex', cursor: 'pointer' }}>
+              <X size={16} color="#fff" />
+            </button>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontSize: 15, fontWeight: 700 }}>Visão geral</div>
+              <div style={{ fontSize: 11.5, color: '#9FB3C8' }}>{resumoPorCarro.length} carro(s) na carga de hoje</div>
+            </div>
+          </div>
+
+          <div style={{ flex: 1, overflowY: 'auto', padding: '14px 16px 24px' }}>
+            <div style={{ display: 'flex', gap: 8, marginBottom: 14 }}>
+              <div style={{ flex: 1, background: '#fff', borderRadius: 12, padding: '12px 10px', textAlign: 'center', boxShadow: '0 1px 3px rgba(11,37,69,0.06)' }}>
+                <div className="num" style={{ fontSize: 22, fontWeight: 800, color: '#0B2545' }}>{total}</div>
+                <div style={{ fontSize: 10.5, color: '#7A8CA0' }}>paradas</div>
+              </div>
+              <div style={{ flex: 1, background: '#fff', borderRadius: 12, padding: '12px 10px', textAlign: 'center', boxShadow: '0 1px 3px rgba(11,37,69,0.06)' }}>
+                <div className="num" style={{ fontSize: 22, fontWeight: 800, color: '#2E8B57' }}>{counts.entregue}</div>
+                <div style={{ fontSize: 10.5, color: '#7A8CA0' }}>entregues</div>
+              </div>
+              <div style={{ flex: 1, background: '#fff', borderRadius: 12, padding: '12px 10px', textAlign: 'center', boxShadow: '0 1px 3px rgba(11,37,69,0.06)' }}>
+                <div className="num" style={{ fontSize: 22, fontWeight: 800, color: '#D64545' }}>{counts.nao_entregue}</div>
+                <div style={{ fontSize: 10.5, color: '#7A8CA0' }}>não entreg.</div>
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+              {resumoPorCarro.map(r => {
+                const pct = r.total ? Math.round((r.entregue / r.total) * 100) : 0;
+                return (
+                  <div key={r.carro} style={{ background: '#fff', borderRadius: 14, padding: '14px 16px', boxShadow: '0 1px 4px rgba(11,37,69,0.08)' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                      <div>
+                        <div style={{ fontSize: 15, fontWeight: 700, color: '#0B2545' }}>Carro {r.carro}</div>
+                        {r.placa && <div style={{ fontSize: 11.5, color: '#7A8CA0' }}>{r.placa}</div>}
+                      </div>
+                      <button
+                        onClick={() => { setFiltroCarro(r.carro); setShowVisaoGeral(false); }}
+                        style={{ background: '#EAF2F8', border: 'none', borderRadius: 8, padding: '7px 12px', fontSize: 11.5, fontWeight: 700, color: '#1E5F8C', cursor: 'pointer' }}
+                      >
+                        Ver paradas
+                      </button>
+                    </div>
+
+                    <div style={{ height: 8, background: '#EFF2F5', borderRadius: 6, overflow: 'hidden', marginBottom: 8 }}>
+                      <div style={{ width: `${pct}%`, height: '100%', background: 'linear-gradient(90deg,#2E8B57,#6FCF97)' }} />
+                    </div>
+
+                    <div style={{ display: 'flex', gap: 14, fontSize: 11.5, color: '#5A7089', flexWrap: 'wrap' }}>
+                      <span><strong style={{ color: '#2E8B57' }}>{r.entregue}</strong> entregues</span>
+                      <span><strong style={{ color: '#D64545' }}>{r.nao_entregue}</strong> não entreg.</span>
+                      <span><strong style={{ color: '#E8A33D' }}>{r.pendente}</strong> pendentes</span>
+                      <span style={{ marginLeft: 'auto', fontWeight: 700, color: '#0B2545' }}>R$ {formatBRL(r.valorEntregue)} / {formatBRL(r.valorTotal)}</span>
+                    </div>
+                  </div>
+                );
+              })}
+              {resumoPorCarro.length === 0 && (
+                <div style={{ textAlign: 'center', padding: '40px 20px', color: '#9FB3C8', fontSize: 13 }}>
+                  Nenhuma carga carregada ainda.
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Relatório de canhotos */}
+      {showRelatorio && (() => {
+        const listaAtiva = relatorioTab === 'entregue' ? paradasEntregues : relatorioTab === 'nao_entregue' ? paradasNaoEntregues : paradasPendentes;
+        const corAtiva = STATUS[relatorioTab].color;
+        return (
+          <div style={{ position: 'fixed', inset: 0, background: '#F5F7F9', zIndex: 40, display: 'flex', flexDirection: 'column' }}>
+            <div style={{ background: '#0B2545', color: '#fff', padding: '18px 16px 14px', display: 'flex', alignItems: 'center', gap: 10 }}>
+              <button onClick={() => setShowRelatorio(false)} style={{ background: 'rgba(255,255,255,0.12)', border: 'none', borderRadius: 8, padding: 7, display: 'flex', cursor: 'pointer' }}>
+                <X size={16} color="#fff" />
+              </button>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontSize: 15, fontWeight: 700 }}>Relatório de canhotos</div>
+                <div style={{ fontSize: 11.5, color: '#9FB3C8' }}>{rota.nome}{rota.motorista ? ` · ${rota.motorista}` : ''}</div>
+              </div>
+            </div>
+
+            <div style={{ padding: '12px 16px 0', display: 'flex', gap: 8 }}>
+              {[
+                { key: 'entregue', label: 'Entregues', n: counts.entregue },
+                { key: 'nao_entregue', label: 'Não entreg.', n: counts.nao_entregue },
+                { key: 'pendente', label: 'Pendentes', n: counts.pendente },
+              ].map(t => (
+                <button
+                  key={t.key}
+                  onClick={() => setRelatorioTab(t.key)}
+                  style={{
+                    flex: 1, padding: '9px 0', borderRadius: 10, border: 'none', cursor: 'pointer',
+                    background: relatorioTab === t.key ? STATUS[t.key].color : '#fff', color: relatorioTab === t.key ? '#fff' : '#5A7089',
+                    fontSize: 12, fontWeight: 700, boxShadow: '0 1px 3px rgba(11,37,69,0.08)'
+                  }}
+                >
+                  {t.label} · {t.n}
+                </button>
+              ))}
+            </div>
+
+            <div style={{ padding: '10px 16px', display: 'flex', gap: 8 }}>
+              <button
+                onClick={() => setRelatorioComoTexto(v => !v)}
+                style={{ flex: 1, background: '#fff', border: '1.5px solid #E3E9EF', borderRadius: 10, padding: '9px 0', fontSize: 12, fontWeight: 700, color: '#1E5F8C', cursor: 'pointer' }}
+              >
+                {relatorioComoTexto ? 'Ver em lista' : 'Ver como texto (copiar)'}
+              </button>
+              <button
+                onClick={() => window.print()}
+                style={{ background: '#fff', border: '1.5px solid #E3E9EF', borderRadius: 10, padding: '9px 14px', fontSize: 12, fontWeight: 700, color: '#5A7089', cursor: 'pointer' }}
+              >
+                Imprimir / PDF
+              </button>
+            </div>
+
+            <div id="relatorio-imprimir" style={{ flex: 1, overflowY: 'auto', padding: '4px 16px 24px' }}>
+              {relatorioComoTexto ? (
+                <>
+                  <div style={{ fontSize: 11.5, color: '#7A8CA0', marginBottom: 8 }}>
+                    Toque na caixa abaixo, selecione tudo e copie para enviar por WhatsApp, e-mail etc.
+                  </div>
+                  <textarea
+                    readOnly
+                    value={gerarRelatorioTexto()}
+                    onFocus={e => e.target.select()}
+                    style={{ width: '100%', minHeight: 420, borderRadius: 12, border: '1.5px solid #E3E9EF', padding: 12, fontSize: 12, fontFamily: 'monospace', background: '#fff', color: '#0B2545' }}
+                  />
+                </>
+              ) : (
+                <>
+                  <div style={{ fontSize: 12.5, color: '#5A7089', fontWeight: 700, margin: '10px 0' }}>
+                    Total em {STATUS[relatorioTab].label.toLowerCase()}: R$ {formatBRL(valorSecao(listaAtiva))}
+                  </div>
+                  {listaAtiva.length === 0 && (
+                    <div style={{ textAlign: 'center', padding: '40px 20px', color: '#9FB3C8', fontSize: 13 }}>
+                      Nenhuma parada nessa categoria.
+                    </div>
+                  )}
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                    {listaAtiva.map(p => (
+                      <div key={p.key} style={{ background: '#fff', borderRadius: 12, padding: '12px 14px', boxShadow: '0 1px 3px rgba(11,37,69,0.06)', borderLeft: `4px solid ${corAtiva}` }}>
+                        <div style={{ fontSize: 13.5, fontWeight: 700, color: '#0B2545' }}>{p.cliente}</div>
+                        <div style={{ fontSize: 11.5, color: '#7A8CA0', marginTop: 1 }}>{p.cidade} · NF {p.itens.map(i => i.nf).join(', ')}</div>
+                        <div style={{ display: 'flex', gap: 6, marginTop: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+                          {p.valorTotal > 0 && <span style={{ fontSize: 10.5, fontWeight: 700, color: '#2E8B57', background: '#EAF6EF', padding: '2px 7px', borderRadius: 6 }}>R$ {formatBRL(p.valorTotal)}</span>}
+                          {p.horario && <span style={{ fontSize: 10.5, color: '#5A7089' }}>{new Date(p.horario).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}</span>}
+                          {p.recebedor && <span style={{ fontSize: 10.5, color: '#5A7089' }}>· {p.recebedor}</span>}
+                        </div>
+                        {p.status === 'nao_entregue' && p.motivo && (
+                          <div style={{ fontSize: 11.5, color: '#D64545', marginTop: 6 }}>Motivo: {p.motivo}</div>
+                        )}
+                        {p.status === 'entregue' && p.assinatura && (
+                          <img src={p.assinatura} alt="assinatura" style={{ height: 28, marginTop: 6, background: '#F5F9FC', borderRadius: 5, border: '1px solid #E3E9EF' }} />
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* Modal configurações */}
+      {showConfig && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(11,37,69,0.5)', display: 'flex', alignItems: 'flex-end', zIndex: 30 }} onClick={() => { setShowConfig(false); setConfirmZerar(false); }}>
+          <div onClick={e => e.stopPropagation()} style={{ background: '#fff', width: '100%', borderRadius: '20px 20px 0 0', padding: '20px 18px 24px' }}>
+            <div style={{ width: 40, height: 4, background: '#E3E9EF', borderRadius: 3, margin: '0 auto 16px' }} />
+            <div style={{ fontSize: 16, fontWeight: 700, color: '#0B2545', marginBottom: 4 }}>Configurações</div>
+            <div style={{ fontSize: 12.5, color: '#7A8CA0', marginBottom: 18 }}>
+              {total} parada(s) na lista atual · {counts.entregue} confirmada(s)
+            </div>
+
+            <button
+              onClick={() => { setShowConfig(false); setShowVisaoGeral(true); }}
+              style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 10, background: '#EAF2F8', border: '1.5px solid #D6E4F0', borderRadius: 12, padding: '13px 14px', color: '#1E5F8C', fontWeight: 700, fontSize: 13.5, cursor: 'pointer', marginBottom: 10 }}
+            >
+              <Truck size={17} /> Visão geral (todos os carros)
+            </button>
+
+            <button
+              onClick={() => { setShowConfig(false); setShowRelatorio(true); setRelatorioTab('entregue'); setRelatorioComoTexto(false); }}
+              style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 10, background: '#EAF2F8', border: '1.5px solid #D6E4F0', borderRadius: 12, padding: '13px 14px', color: '#1E5F8C', fontWeight: 700, fontSize: 13.5, cursor: 'pointer', marginBottom: 10 }}
+            >
+              <FileSpreadsheet size={17} /> Relatório de canhotos
+            </button>
+
+            {!confirmZerar ? (
+              <button
+                onClick={() => setConfirmZerar(true)}
+                style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 10, background: '#FDEBEB', border: '1.5px solid #F2C9C9', borderRadius: 12, padding: '13px 14px', color: '#D64545', fontWeight: 700, fontSize: 13.5, cursor: 'pointer' }}
+              >
+                <Trash2 size={17} /> Zerar carga do dia
+              </button>
+            ) : (
+              <div style={{ background: '#FDEBEB', borderRadius: 12, padding: '14px' }}>
+                <div style={{ fontSize: 13, color: '#D64545', fontWeight: 600, marginBottom: 12, lineHeight: 1.4 }}>
+                  Isso vai apagar todas as {total} nota(s) da lista atual para todo mundo que tem o link. Use isso só ao iniciar a carga de um novo dia. Confirma?
+                </div>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <button onClick={zerarCarga} style={{ flex: 1, background: '#D64545', color: '#fff', border: 'none', borderRadius: 10, padding: '11px 0', fontWeight: 700, fontSize: 13, cursor: 'pointer' }}>
+                    Sim, zerar tudo
+                  </button>
+                  <button onClick={() => setConfirmZerar(false)} style={{ flex: 1, background: '#fff', color: '#5A7089', border: '1.5px solid #E3E9EF', borderRadius: 10, padding: '11px 0', fontWeight: 700, fontSize: 13, cursor: 'pointer' }}>
+                    Cancelar
+                  </button>
+                </div>
+              </div>
+            )}
+
+            <button onClick={() => { setShowConfig(false); setConfirmZerar(false); }} style={{ width: '100%', marginTop: 14, background: 'none', border: 'none', color: '#7A8CA0', fontSize: 13, cursor: 'pointer', padding: '6px 0' }}>
+              Fechar
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Modal motivo não entrega */}
+      {motivoFor && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(11,37,69,0.45)', display: 'flex', alignItems: 'flex-end', zIndex: 30 }} onClick={() => setMotivoFor(null)}>
+          <div onClick={e => e.stopPropagation()} style={{ background: '#fff', width: '100%', borderRadius: '20px 20px 0 0', padding: '20px 18px 24px' }}>
+            <div style={{ width: 40, height: 4, background: '#E3E9EF', borderRadius: 3, margin: '0 auto 16px' }} />
+            <div style={{ fontSize: 16, fontWeight: 700, color: '#0B2545', marginBottom: 4 }}>Motivo da não entrega</div>
+            <div style={{ fontSize: 12.5, color: '#7A8CA0', marginBottom: 14 }}>Selecione o motivo para registrar a ocorrência.</div>
+            {MOTIVOS.map(m => (
+              <button
+                key={m}
+                onClick={() => marcarNaoEntregue(motivoFor, m)}
+                style={{ width: '100%', textAlign: 'left', background: '#F5F7F9', border: 'none', borderRadius: 10, padding: '13px 14px', fontSize: 13.5, color: '#1E3A5F', marginBottom: 8, cursor: 'pointer', fontWeight: 500 }}
+              >
+                {m}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+
+const rootEl = document.getElementById('root');
+ReactDOM.createRoot(rootEl).render(React.createElement(AppEntregas));
+
+</script>
+</body>
+</html>
